@@ -14,7 +14,7 @@
 
 ## 🔧 前置要求
 
-⚠️ **重要提示**：本插件需要配合后端 API 使用，请按以下步骤操作：
+⚠️ **重要提示**：本插件需要配合后端 API 和原版RVC或SVC使用，请按以下步骤操作：
 
 ### 1. 下载 RVCSVC-API 后端整合包
 **下载链接：** [你的整合包下载链接](https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/3b/c8/85158a094aae0eaa570626922757b85268c6a3dba7911913e4be9a4e1870?filename=RVCSVC-API.7z&namespace=CCYellowStar&repository=RVCSVC-API&revision=master&tag=model&auth_key=1760883358-05cb700c23334501a487fb5479f6a414-0-649c7193180e95e0b2025668eab34a8c
