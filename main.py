@@ -10,7 +10,7 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.message.components import Record
 from astrbot.api.message_components import Node, Plain, Image as CompImage
 from astrbot.core.utils.session_waiter import session_waiter, SessionController
-from astrbot import logger
+from astrbot.api import logger
 from functools import partial
 from gradio_client import Client
 
