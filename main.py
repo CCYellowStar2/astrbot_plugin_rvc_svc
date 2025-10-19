@@ -123,7 +123,8 @@ class MusicPlugin(Star):
         except Exception as e:
             logger.error(traceback.format_exc())
             yield event.plain_result(f"刷新 RVC 模型出错了: {e}")
-
+            
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置rvc后端链接")
     async def set_rvc_url(self, event: AstrMessageEvent):
         args = event.message_str.replace("设置rvc后端链接", "").strip().split()
@@ -163,7 +164,8 @@ class MusicPlugin(Star):
         except Exception as e:
             logger.error(traceback.format_exc())
             yield event.plain_result(f"刷新 SVC 模型出错了: {e}")
-
+            
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置svc后端链接")
     async def set_svc_url(self, event: AstrMessageEvent):
         args = event.message_str.replace("设置svc后端链接", "").strip().split()
