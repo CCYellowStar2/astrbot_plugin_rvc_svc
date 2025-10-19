@@ -42,8 +42,8 @@
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `rvc_base_url` | RVC 后端地址 | `http://127.0.0.1:7860/` |
-| `svc_base_url` | SVC 后端地址 | `http://127.0.0.1:7866/` |
+| `rvc_base_url` | RVCAPI 后端地址 | `http://127.0.0.1:7860/` |
+| `svc_base_url` | SVCAPI 后端地址 | `http://127.0.0.1:7866/` |
 | `default_api` | 音乐 API 类型 | `netease_nodejs` |
 | `nodejs_base_url` | 网易云 API 地址 | `https://163api.qijieya.cn` |
 | `timeout` | 用户选择超时时间（秒） | `60` |
