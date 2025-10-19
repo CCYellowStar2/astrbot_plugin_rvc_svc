@@ -33,21 +33,13 @@ class MusicPlugin(Star):
         self.rvc_base_url = config.get("rvc_base_url", "http://127.0.0.1:7860/")
         self.svc_base_url = config.get("svc_base_url", "http://127.0.0.1:7866/")
         
-        # 向后兼容旧配置
-        if "base_url" in config and "rvc_base_url" not in config:
-            self.rvc_base_url = config.get("base_url")
-        
         self.default_api = config.get("default_api", "netease_nodejs")
-        self.nodejs_base_url = config.get("nodejs_base_url", "http://127.0.0.1:3000")
+        self.nodejs_base_url = config.get("nodejs_base_url", "https://163api.qijieya.cn")
         self.timeout = config.get("timeout", 60)
         
         # === 为 RVC 和 SVC 分别存储模型列表 ===
         self.rvc_models_keywords = config.get("rvc_models_keywords", [])
         self.svc_models_keywords = config.get("svc_models_keywords", [])
-        
-        # 向后兼容旧配置
-        if "models_keywords" in config and not self.rvc_models_keywords:
-            self.rvc_models_keywords = config.get("models_keywords", [])
         
         self.inference_timeout = config.get("inference_timeout", 300)
         
