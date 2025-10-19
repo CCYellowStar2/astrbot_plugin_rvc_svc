@@ -4,7 +4,6 @@ import asyncio
 import shutil
 from datetime import datetime
 import traceback
-from pydub import AudioSegment
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.core.config.astrbot_config import AstrBotConfig
