@@ -1,0 +1,50 @@
+{
+  "rvc_base_url": {
+    "description": "RVC Gradio 后端服务地址",
+    "type": "string",
+    "hint": "你的 Gradio RVC 后端运行的地址，必须以 / 结尾",
+    "default": "http://127.0.0.1:7860/"
+  },
+  "svc_base_url": {
+    "description": "SVC Gradio 后端服务地址",
+    "type": "string",
+    "hint": "你的 Gradio SVC 后端运行的地址，必须以 / 结尾",
+    "default": "http://127.0.0.1:7866/"
+  },
+  "default_api": {
+    "description": "默认使用的音乐 API",
+    "type": "string",
+    "hint": "可选 'netease' 或 'netease_nodejs'，推荐使用 'netease_nodejs'",
+    "default": "netease_nodejs"
+  },
+  "nodejs_base_url": {
+    "description": "网易云音乐 Node.js API 地址",
+    "type": "string",
+    "hint": "仅在 default_api 设置为 'netease_nodejs' 时生效",
+    "default": "https://163api.qijieya.cn"
+  },
+  "timeout": {
+    "description": "等待用户选择的超时时间（秒）",
+    "type": "int",
+    "hint": "等待用户选择歌曲或模型的最大时间",
+    "default": 30
+  },
+  "inference_timeout": {
+    "description": "AI推理超时时间（秒）",
+    "type": "int",
+    "hint": "等待后端完成音频转换的最大时间，如果经常超时可以调大这个值",
+    "default": 300
+  },
+  "rvc_models_keywords": {
+    "description": "RVC 模型别名配置",
+    "type": "list",
+    "hint": "这是一个列表，每行一个模型。格式为 '模型文件名|||别名'。如果|||后面为空，则直接显示文件名。使用 /刷新rvc模型 命令自动获取",
+    "default": []
+  },
+  "svc_models_keywords": {
+    "description": "SVC 模型别名配置",
+    "type": "list",
+    "hint": "这是一个列表，每行一个模型。格式为 '模型文件名|||别名'。如果|||后面为空，则直接显示文件名。使用 /刷新svc模型 命令自动获取",
+    "default": []
+  }
+}
