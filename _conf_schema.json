@@ -1,14 +1,14 @@
 {
   "rvc_base_url": {
-    "description": "RVC Gradio 后端服务地址",
+    "description": "RVC API Gradio 后端服务地址",
     "type": "string",
-    "hint": "你的 Gradio RVC 后端运行的地址，必须以 / 结尾",
+    "hint": "你的 Gradio API RVC 后端运行的地址，必须以 / 结尾",
     "default": "http://127.0.0.1:7860/"
   },
   "svc_base_url": {
-    "description": "SVC Gradio 后端服务地址",
+    "description": "SVC API Gradio 后端服务地址",
     "type": "string",
-    "hint": "你的 Gradio SVC 后端运行的地址，必须以 / 结尾",
+    "hint": "你的 Gradio API SVC 后端运行的地址，必须以 / 结尾",
     "default": "http://127.0.0.1:7866/"
   },
   "default_api": {
