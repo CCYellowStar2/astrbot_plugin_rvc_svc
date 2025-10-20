@@ -17,8 +17,9 @@
 ⚠️ **重要提示**：本插件需要配合后端 API 和原版RVC或SVC使用，请按以下步骤操作：
 
 ### 1. 下载 RVCSVC-API 后端整合包
-**下载链接：** [你的整合包下载链接](https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/3b/c8/85158a094aae0eaa570626922757b85268c6a3dba7911913e4be9a4e1870?filename=RVCSVC-API.7z&namespace=CCYellowStar&repository=RVCSVC-API&revision=master&tag=model&auth_key=1760883358-05cb700c23334501a487fb5479f6a414-0-649c7193180e95e0b2025668eab34a8c
-)
+**下载链接：** [ModelScope 下载](https://www.modelscope.cn/models/CCYellowStar/RVCSVC-API/resolve/master/RVCSVC-API.7z)
+
+**或使用源码：** [RVCSVC-API GitHub 仓库](https://github.com/CCYellowStar2/RVCSVC-API)
 
 ### 2. 启动后端服务
 解压整合包后，根据需要启动对应的服务：
@@ -28,9 +29,14 @@
 - **同时也要启动原版的RVC或者SVC（SVC需要替换一个文件，整合包里有说明）**
 
 ### 3. 查看使用说明
-⚠️ **请务必阅读整合包内的 `使用说明.txt`**，里面包含：
-- 模型放置位置
-- 端口配置说明
+⚠️ **请务必阅读配置文档**：
+
+：查看 [使用说明.md](https://github.com/CCYellowStar2/RVCSVC-API/blob/main/%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E.md)
+
+文档包含：
+- 📂 RVC/SVC 模型文件正确存放位置
+- ⚙️ 端口配置说明
+- 🚦 启动顺序要求
 
 ## ⚙️ 配置
 
