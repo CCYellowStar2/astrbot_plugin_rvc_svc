@@ -21,7 +21,7 @@
     "description": "网易云音乐 Node.js API 地址",
     "type": "string",
     "hint": "仅在 default_api 设置为 'netease_nodejs' 时生效",
-    "default": "https://163api.qijieya.cn"
+    "default": "https://wyy.xhily.com/"
   },
   "timeout": {
     "description": "等待用户选择的超时时间（秒）",
