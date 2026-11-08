@@ -70,9 +70,9 @@ def split_flags(args: list) -> tuple[list, str, bool]:
 
 
 def clamp_db(value) -> float:
-    """音量配置统一按 dB 处理，限制在 -20 ~ 20，非法值当 0。"""
+    """音量统一按 dB 处理：与后端滑条一致，限制在 -3 ~ 3，非法值当 0。"""
     try:
-        return max(-20.0, min(20.0, float(value)))
+        return max(-3.0, min(3.0, float(value)))
     except (TypeError, ValueError):
         return 0.0
 
