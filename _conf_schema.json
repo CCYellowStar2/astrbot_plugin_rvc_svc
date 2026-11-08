@@ -56,5 +56,33 @@
     ],
     "hint": "不带 msst / hp 标记时用这个。VR-HP5 快（10 秒级），MSST BS-Roformer 分离更干净但更慢、更吃显存；单条命令末尾加 msst / hp 可临时覆盖。改完保存即生效，无需重载",
     "default": "VR-HP5 (默认)"
+  },
+  "music_card": {
+    "description": "翻唱结果用 QQ 音乐卡片发送",
+    "type": "bool",
+    "hint": "仅 OneBot(aiocqhttp) 平台生效：成品先上传到临时存储，再用签名服务生成卡片。任一步失败会自动退回语音文件；官方机器人(qq_official)始终发文件",
+    "default": true
+  },
+  "ark_key": {
+    "description": "音乐卡片签名服务的 key",
+    "type": "string",
+    "hint": "留空则不做卡片（直接发文件）",
+    "default": ""
+  },
+  "ark_api": {
+    "description": "音乐卡片签名服务地址",
+    "type": "string",
+    "hint": "默认即咸鱼 API 的 QQ 音乐卡片签名接口，一般不用改",
+    "default": "https://apii.xianyuw.cn/api/v1/qq-musicArk"
+  },
+  "music_card_format": {
+    "description": "卡片签名格式",
+    "type": "string",
+    "options": [
+      "qq",
+      "bilibili"
+    ],
+    "hint": "qq / bilibili 都能签名成功；163 目前签名失败率高，暂不提供",
+    "default": "qq"
   }
 }

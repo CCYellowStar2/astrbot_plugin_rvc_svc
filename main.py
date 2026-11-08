@@ -15,6 +15,13 @@ from astrbot.api import logger
 from functools import partial
 from gradio_client import Client
 from .api_url import prepare_api_url
+from .card_sender import (
+    DEFAULT_ARK_API,
+    CardError,
+    send_json_card,
+    sign_ark,
+    upload_audio,
+)
 from .bili_search import (
     build_board as build_bili_board,
     fetch_video_meta,
@@ -110,9 +117,17 @@ class MusicPlugin(Star):
         fn = partial(job.result, timeout=timeout)
         return await loop.run_in_executor(None, fn)
 
-    async def _send_result_audio(self, event: AstrMessageEvent, result_path: str):
+    async def _send_result_audio(self, event: AstrMessageEvent, result_path: str, song: dict | None = None):
+        sent_as_card = False
+        if self.config.get("music_card", True):
+            try:
+                await self._send_music_card(event, result_path, song or {})
+                sent_as_card = True
+            except Exception as error:
+                logger.warning(f"音乐卡片发送失败，回退为文件: {error}")
         try:
-            await event.send(event.chain_result([Record(file=result_path)]))
+            if not sent_as_card:
+                await event.send(event.chain_result([Record(file=result_path)]))
         except Exception:
             logger.error(traceback.format_exc())
         finally:
@@ -121,6 +136,30 @@ class MusicPlugin(Star):
                     os.remove(result_path)
                 except OSError as error:
                     logger.error(f"删除临时文件失败: {error}")
+
+    async def _send_music_card(self, event: AstrMessageEvent, result_path: str, song: dict):
+        """上传 -> 签名 -> 发卡片；任何一步失败都抛异常，由调用方回退。"""
+        if event.get_platform_name() != "aiocqhttp":
+            raise CardError(f"当前平台 {event.get_platform_name()} 不支持音乐卡片")
+
+        title = (song.get("name") or "AI 翻唱").strip()
+        singer = (song.get("artists") or "").strip()
+        cover = song.get("pic") or ""
+
+        audio_url = await asyncio.to_thread(upload_audio, result_path)
+        card = await asyncio.to_thread(
+            sign_ark,
+            self.config.get("ark_api") or DEFAULT_ARK_API,
+            self.config.get("ark_key", ""),
+            audio_url,
+            f"{title}（AI 翻唱）",
+            singer or "AI 翻唱",
+            cover,
+            audio_url,
+            self.config.get("music_card_format", "qq"),
+        )
+        await send_json_card(event, card)
+        logger.info(f"音乐卡片已发送: {title}")
 
     def get_models_display_list(self, api_type="rvc"):
         """获取指定 API 类型的模型显示列表"""
@@ -534,7 +573,7 @@ class MusicPlugin(Star):
             if result_path and os.path.exists(result_path):
                 elapsed = format_elapsed_seconds(time.perf_counter() - started_at)
                 await event.send(event.plain_result(f"✅ 翻唱完成，总用时：{elapsed}"))
-                task = asyncio.create_task(self._send_result_audio(event, result_path))
+                task = asyncio.create_task(self._send_result_audio(event, result_path, song))
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
                 result_path = None
