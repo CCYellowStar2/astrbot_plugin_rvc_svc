@@ -93,8 +93,11 @@
 `/svcb` 会下载前 16 条结果的封面，用 Pillow 拼成一张 900px 宽的长图（两栏 × 8 行），
 每条带序号、标题（超长自动折两行 + 省略号）、UP 主、时长、播放量。
 
-字体使用 `assets/NotoSansCJKsc-Regular.ttf`（Noto Sans CJK SC，SIL OFL 1.1，见 `assets/NOTO-LICENSE.txt`）。
+字体使用 `assets/NotoSansCJKsc-Regular.ttf`（Noto Sans CJK SC 的**子集**，SIL OFL 1.1，见 `assets/NOTO-LICENSE.txt`）。
 容器里默认没有中文字体，不附带这个文件就会渲染成方块。
+
+该文件已用 fontTools 子集化：**GB2312 全集（6763 汉字 + 全角符号）+ ASCII + 常用中文标点**，15.7 MB → 3.4 MB。
+日常视频标题、UP 主名基本不会缺字；极端生僻字（如「龘」「靐」）会渲染成方块，属预期取舍。
 
 ## 📌 使用示例
 
