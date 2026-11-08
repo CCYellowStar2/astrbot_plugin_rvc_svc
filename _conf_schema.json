@@ -86,10 +86,16 @@
     "hint": "qq / bilibili 实测可签；163 目前服务端一律返回 500（重试 3 次仍失败），选中后会退化为发文件",
     "default": "qq"
   },
-  "card_fallback_cover": {
-    "description": "封面兜底图片地址",
-    "type": "string",
-    "hint": "歌曲没封面时用这张公网图片；留空则使用插件内置的默认封面（首次上传到临时存储后缓存复用）",
-    "default": ""
+  "vocal_vol": {
+    "description": "人声音量（dB）",
+    "type": "int",
+    "hint": "0 = 不变，+6 更响，-6 更轻，范围 -20 ~ 20；只动人声轨，伴奏不受影响",
+    "default": 0
+  },
+  "inst_vol": {
+    "description": "伴奏音量（dB）",
+    "type": "int",
+    "hint": "0 = 不变，+6 更响，-6 更轻，范围 -20 ~ 20；想让伴奏垫一点就调成负值",
+    "default": 0
   }
 }

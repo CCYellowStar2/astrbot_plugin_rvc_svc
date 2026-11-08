@@ -81,7 +81,8 @@
 | `ark_key` | 音乐卡片签名服务的 key，留空则不发卡片 | 空 |
 | `ark_api` | 音乐卡片签名服务地址 | 咸鱼 API 的 QQ 音乐卡片接口 |
 | `music_card_format` | 卡片签名格式（`qq` / `bilibili`） | `qq` |
-| `card_fallback_cover` | 封面兜底图片地址（留空则用内置默认封面） | 空 |
+| `vocal_vol` | 人声音量（dB，-20 ~ 20） | `0` |
+| `inst_vol` | 伴奏音量（dB，-20 ~ 20） | `0` |
 
 > `separator_model` 改完**保存即生效**（插件每次使用时现读配置，不用重载）。
 > 命令里的 `msst` / `hp` 优先级高于它；配置值在后端列表里找不到时会自动回退到第一项。
@@ -119,7 +120,7 @@
 
 卡片上的字段：标题「歌名（AI 翻唱 · 原唱 xxx）」，**歌手位写的是翻唱用的歌手名**（取模型的别名，没配别名就用去掉 `.pth` 的文件名）。
 
-封面兜底顺序：B 站搜索结果的封面 → 网易云 `song/detail` 的 `album.picUrl`（转 https + `?param=300y300`，7.1 MB → 约 100 KB）→ 配置的 `card_fallback_cover` → **内置默认封面**（`assets/default_cover.jpg`，首次用到时上传到临时存储并在进程内缓存，之后所有歌复用同一地址）。
+封面兜底顺序：B 站搜索结果的封面 → 网易云 `song/detail` 的 `album.picUrl`（转 https + `?param=300y300`，7.1 MB → 约 100 KB）→ **内置默认封面**（`assets/default_cover.jpg`，首次用到时上传到临时存储并在进程内缓存，之后所有歌复用同一地址）。
 
 | 项 | 说明 |
 |---|---|

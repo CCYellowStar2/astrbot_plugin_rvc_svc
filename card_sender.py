@@ -133,12 +133,10 @@ def upload_audio(path: str) -> str:
     return _upload_with_retry(path, "audio/mpeg", "audio")
 
 
-def ensure_cover(cover: str = "", fallback_url: str = "") -> str:
-    """保证有一个可用封面：原封面 -> 配置的兜底地址 -> 内置默认图（上传一次后缓存）。"""
+def ensure_cover(cover: str = "") -> str:
+    """保证有一个可用封面：有原封面就用，没有就用内置默认图（首次上传后缓存）。"""
     if cover:
         return cover
-    if fallback_url:
-        return fallback_url
 
     global _default_cover_url
     if _default_cover_url:

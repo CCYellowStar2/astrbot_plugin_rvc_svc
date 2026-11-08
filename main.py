@@ -69,6 +69,14 @@ def split_flags(args: list) -> tuple[list, str, bool]:
     return remaining, separator, big_reverb
 
 
+def clamp_db(value) -> float:
+    """音量配置统一按 dB 处理，限制在 -20 ~ 20，非法值当 0。"""
+    try:
+        return max(-20.0, min(20.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def format_elapsed_seconds(seconds: float) -> str:
     total_seconds = max(0, round(seconds))
     minutes, remaining_seconds = divmod(total_seconds, 60)
@@ -162,10 +170,8 @@ class MusicPlugin(Star):
         if not cover:
             # 签名服务要求 cover 非空；网易云那条路没有封面，补取一次
             cover = await asyncio.to_thread(fetch_netease_cover, song.get("id"))
-        # 还没有就用兜底：配置里的公共图片地址，或内置默认封面（首次上传后进程内缓存）
-        cover = await asyncio.to_thread(
-            ensure_cover, cover, self.config.get("card_fallback_cover", "")
-        )
+        # 还没有就用内置默认封面兜底（首次上传后进程内缓存）
+        cover = await asyncio.to_thread(ensure_cover, cover)
 
         audio_url = await asyncio.to_thread(upload_audio, result_path)
         card_title = f"{title}（AI 翻唱）"
@@ -586,8 +592,8 @@ class MusicPlugin(Star):
                 client,
                 song_name_src=str(song["id"]),
                 key_shift=key_shift,
-                vocal_vol=0,
-                inst_vol=0,
+                vocal_vol=clamp_db(self.config.get("vocal_vol", 0)),
+                inst_vol=clamp_db(self.config.get("inst_vol", 0)),
                 model_dropdown=model_name,
                 uvr_choice=self._resolve_uvr_choice(base_url, separator_pref),
                 **effect_params,
