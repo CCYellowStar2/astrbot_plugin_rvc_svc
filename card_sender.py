@@ -101,6 +101,13 @@ _UPLOADERS = (("uguu", _upload_uguu), ("pomf2", _upload_pomf2))
 def _upload_with_retry(path: str, mime: str, kind: str) -> str:
     """两个源 × 各试两次；上传成功即返回，直链预检只作提示（真正的判据是签名服务）。"""
     errors = []
+def _upload_with_retry(path: str, mime: str, kind: str) -> str:
+    """两个源 × 各试两次；上传成功即返回，直链预检只作提示（真正的判据是签名服务）。
+
+    kind 必须是 "audio" 或 "image"（校验逻辑按它分支），日志里用中文标签显示。
+    """
+    label = {"audio": "音频", "image": "封面"}.get(kind, kind)
+    errors = []
     for name, uploader in _UPLOADERS:
         for attempt in range(1, 3):
             try:
@@ -112,18 +119,18 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
                 continue
             ok, detail = _verify_media(url, kind)
             if ok:
-                logger.info(f"{kind} 已上传到 {name}: {url}")
+                logger.info(f"{label} 已上传到 {name}: {url}")
             else:
-                logger.warning(f"{kind} 直链预检没过（{detail}），仍交给签名服务判定: {url}")
+                logger.warning(f"{label} 直链预检没过（{detail}），仍交给签名服务判定: {url}")
             return url
-    raise CardError(f"{kind} 临时上传全部失败 -> " + " | ".join(errors))
+    raise CardError(f"{label} 临时上传全部失败 -> " + " | ".join(errors))
 
 
 def upload_audio(path: str) -> str:
     """上传音频，返回可被 QQ 解析的直链。"""
     if not os.path.isfile(path):
         raise CardError(f"文件不存在: {path}")
-    return _upload_with_retry(path, "audio/mpeg", "音频")
+    return _upload_with_retry(path, "audio/mpeg", "audio")
 
 
 def ensure_cover(cover: str = "", fallback_url: str = "") -> str:
@@ -139,7 +146,7 @@ def ensure_cover(cover: str = "", fallback_url: str = "") -> str:
     if not os.path.isfile(_DEFAULT_COVER_PATH):
         raise CardError(f"内置默认封面不存在: {_DEFAULT_COVER_PATH}")
 
-    _default_cover_url = _upload_with_retry(_DEFAULT_COVER_PATH, "image/jpeg", "封面")
+    _default_cover_url = _upload_with_retry(_DEFAULT_COVER_PATH, "image/jpeg", "image")
     logger.info(f"已启用内置默认封面: {_default_cover_url}")
     return _default_cover_url
 
