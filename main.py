@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import asyncio
 import shutil
+import time
 from datetime import datetime
 import traceback
 from astrbot.api.event import filter, AstrMessageEvent
@@ -13,9 +14,59 @@ from astrbot.core.utils.session_waiter import session_waiter, SessionController
 from astrbot.api import logger
 from functools import partial
 from gradio_client import Client
+from .api_url import prepare_api_url
+from .bili_search import (
+    build_board as build_bili_board,
+    fetch_video_meta,
+    parse_bv,
+    search_videos as search_bili_videos,
+)
+from .separator_models import (
+    extract_separator_models,
+    format_separator_models,
+    resolve_separator_model,
+)
 
 # 定义分隔符常量，方便修改
 MODEL_ALIAS_SEPARATOR = "|||"
+
+# 人声分离模型的快捷标记：/svc <歌名> [升降调] [msst|hp]
+SEPARATOR_FLAGS = {
+    "hp": "hp",
+    "hp5": "hp",
+    "vr": "hp",
+    "msst": "msst",
+    "roformer": "msst",
+}
+SEPARATOR_LABELS = {"hp": "VR-HP5 (默认)", "msst": "MSST BS-Roformer"}
+
+# 混响快捷标记：/svc <歌名> 大混响
+REVERB_FLAGS = {"大混响", "rv", "reverb", "bigreverb"}
+BIG_REVERB_INTENSITY = 8
+BIG_REVERB_DELAY = 5
+
+
+def split_flags(args: list) -> tuple[list, str, bool]:
+    """挑出 msst/hp（分离模型）与 大混响（混响+回声）标记，剩下的照旧当歌名。"""
+    remaining, separator, big_reverb = [], None, False
+    for token in args:
+        key = token.strip().lower().lstrip("-")
+        if key in SEPARATOR_FLAGS:
+            separator = SEPARATOR_FLAGS[key]
+        elif key in REVERB_FLAGS:
+            big_reverb = True
+        else:
+            remaining.append(token)
+    return remaining, separator, big_reverb
+
+
+def format_elapsed_seconds(seconds: float) -> str:
+    total_seconds = max(0, round(seconds))
+    minutes, remaining_seconds = divmod(total_seconds, 60)
+    if minutes:
+        return f"{minutes} 分 {remaining_seconds:02d} 秒"
+    return f"{remaining_seconds} 秒"
+
 
 @register(
     "astrbot_plugin_rvc_svc",
@@ -28,10 +79,12 @@ class MusicPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self._background_tasks = set()
         
         # === 支持两个独立的后端配置 ===
-        self.rvc_base_url = config.get("rvc_base_url", "http://127.0.0.1:7860/")
-        self.svc_base_url = config.get("svc_base_url", "http://127.0.0.1:7866/")
+        self.rvc_base_url = prepare_api_url(config.get("rvc_base_url", "http://127.0.0.1:7860/"))
+        self.svc_base_url = prepare_api_url(config.get("svc_base_url", "http://127.0.0.1:7866/"))
+        self.separator_model = config.get("separator_model", "VR-HP5 (默认)")
         
         self.default_api = config.get("default_api", "netease_nodejs")
         self.nodejs_base_url = config.get("nodejs_base_url", "https://163api.qijieya.cn")
@@ -57,6 +110,18 @@ class MusicPlugin(Star):
         fn = partial(job.result, timeout=timeout)
         return await loop.run_in_executor(None, fn)
 
+    async def _send_result_audio(self, event: AstrMessageEvent, result_path: str):
+        try:
+            await event.send(event.chain_result([Record(file=result_path)]))
+        except Exception:
+            logger.error(traceback.format_exc())
+        finally:
+            if os.path.isfile(result_path):
+                try:
+                    os.remove(result_path)
+                except OSError as error:
+                    logger.error(f"删除临时文件失败: {error}")
+
     def get_models_display_list(self, api_type="rvc"):
         """获取指定 API 类型的模型显示列表"""
         models_keywords = self.svc_models_keywords if api_type == "svc" else self.rvc_models_keywords
@@ -70,10 +135,59 @@ class MusicPlugin(Star):
             key_list.append(model_name)
         return "\n".join(display_names), key_list
 
+    def _fetch_separator_models(self, base_url: str | None = None) -> list[str]:
+        # 分离模型列表按「当前使用的后端」去取，取不到再交叉兜底，
+        # 避免只用 SVC 时因为连不上 RVC 而整条 /svc 流程失败。
+        primary = base_url or self.rvc_base_url
+        candidates = [primary, self.svc_base_url if primary == self.rvc_base_url else self.rvc_base_url]
+        last_error = None
+        for candidate in candidates:
+            try:
+                client = Client(prepare_api_url(candidate))
+                return extract_separator_models(client.config)
+            except Exception as error:
+                last_error = error
+                logger.warning(f"从 {candidate} 获取人声分离模型失败: {error}")
+        raise last_error
+
+    def _current_default_separator(self) -> str:
+        """默认分离模型：每次现读配置，WebUI 里改完保存即生效。"""
+        value = self.config.get("separator_model") or getattr(self, "separator_model", "")
+        value = str(value or "").strip()
+        return value or "VR-HP5 (默认)"
+
+    def _resolve_separator_model(self, models: list[str]) -> str:
+        selected_model, changed = resolve_separator_model(models, self._current_default_separator())
+        if changed:
+            self.separator_model = selected_model
+            self.config["separator_model"] = selected_model
+            self.config.save_config()
+        return selected_model
+
+    def _get_active_separator_model(self, base_url: str | None = None) -> str:
+        return self._resolve_separator_model(self._fetch_separator_models(base_url))
+
+    def _resolve_uvr_choice(self, base_url: str, preference: str | None = None) -> str:
+        """本次用哪个分离模型：没指定就跟随配置里的默认值。"""
+        if not preference:
+            return self._get_active_separator_model(base_url)
+        models = self._fetch_separator_models(base_url)
+        keywords = ("msst", "roformer") if preference == "msst" else ("hp", "karaoke")
+        for model in models:
+            name = model.lower()
+            if any(keyword in name for keyword in keywords):
+                return model
+        fallback, _ = resolve_separator_model(models, self._current_default_separator())
+        logger.warning(f"后端没有与 {preference} 匹配的分离模型，回退到 {fallback}；可选: {models}")
+        return fallback
+
+    def _separator_models_message(self, models: list[str], selected_model: str) -> str:
+        return f"可用人声分离模型：\n{format_separator_models(models, selected_model)}"
+
     async def _update_models_from_api(self, api_type="rvc"):
         """从指定的 API 更新模型列表"""
         base_url = self.svc_base_url if api_type == "svc" else self.rvc_base_url
-        client = Client(base_url)
+        client = Client(prepare_api_url(base_url))
         try:
             model_list_from_api = await self._async_predict(client, api_name="/show_model")
         except Exception:
@@ -103,6 +217,44 @@ class MusicPlugin(Star):
         self.config.save_config()
         logger.info(f"{api_type.upper()} 模型列表已更新并成功保存，共 {len(new_models_list)} 个模型")
 
+    @filter.command("分离模型列表")
+    async def list_separator_models(self, event: AstrMessageEvent):
+        try:
+            models = self._fetch_separator_models()
+            selected_model = self._resolve_separator_model(models)
+            yield event.plain_result(self._separator_models_message(models, selected_model))
+        except Exception as error:
+            logger.error(traceback.format_exc())
+            yield event.plain_result(f"获取分离模型列表失败: {error}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("设置分离模型")
+    async def set_separator_model(self, event: AstrMessageEvent):
+        try:
+            models = self._fetch_separator_models()
+            selected_model = self._resolve_separator_model(models)
+            args = event.message_str.replace("设置分离模型", "", 1).strip().split()
+            if len(args) != 1 or not args[0].isdigit():
+                yield event.plain_result(
+                    f"用法: /设置分离模型 <序号>\n{self._separator_models_message(models, selected_model)}"
+                )
+                return
+
+            model_index = int(args[0]) - 1
+            if not 0 <= model_index < len(models):
+                yield event.plain_result(
+                    f"序号超出范围。\n{self._separator_models_message(models, selected_model)}"
+                )
+                return
+
+            self.separator_model = models[model_index]
+            self.config["separator_model"] = self.separator_model
+            self.config.save_config()
+            yield event.plain_result(f"已设置人声分离模型: {self.separator_model}")
+        except Exception as error:
+            logger.error(traceback.format_exc())
+            yield event.plain_result(f"设置分离模型失败: {error}")
+
     # ==================== RVC 命令 ====================
     
     @filter.command("刷新rvc模型")
@@ -131,8 +283,7 @@ class MusicPlugin(Star):
         if not args:
             yield event.plain_result(f"当前 RVC 后端: {self.rvc_base_url}\n用法: /设置rvc后端链接 <URL>")
             return
-        _url = args[0]
-        if not _url.endswith("/"): _url += "/"
+        _url = prepare_api_url(args[0])
         self.rvc_base_url = _url
         self.config["rvc_base_url"] = _url
         self.config.save_config()
@@ -172,8 +323,7 @@ class MusicPlugin(Star):
         if not args:
             yield event.plain_result(f"当前 SVC 后端: {self.svc_base_url}\n用法: /设置svc后端链接 <URL>")
             return
-        _url = args[0]
-        if not _url.endswith("/"): _url += "/"
+        _url = prepare_api_url(args[0])
         self.svc_base_url = _url
         self.config["svc_base_url"] = _url
         self.config.save_config()
@@ -185,15 +335,33 @@ class MusicPlugin(Star):
         async for result in self._handle_cover(event, api_type="svc"):
             yield result
 
+    @filter.command("rvcb")
+    async def rvcb(self, event: AstrMessageEvent):
+        """RVC 翻唱（素材从 B 站搜索）"""
+        async for result in self._handle_cover(event, api_type="rvc", cmd="rvcb", source="bili"):
+            yield result
+
+    @filter.command("svcb")
+    async def svcb(self, event: AstrMessageEvent):
+        """SVC 翻唱（素材从 B 站搜索）"""
+        async for result in self._handle_cover(event, api_type="svc", cmd="svcb", source="bili"):
+            yield result
+
     # ==================== 通用处理逻辑 ====================
 
-    async def _handle_cover(self, event: AstrMessageEvent, api_type="rvc"):
-        """统一的翻唱处理逻辑"""
-        cmd = api_type  # "rvc" 或 "svc"
-        args = event.message_str.replace(cmd, "").strip().split()
+    async def _handle_cover(self, event: AstrMessageEvent, api_type="rvc", cmd=None, source="netease"):
+        """统一的翻唱处理逻辑；source="bili" 时改用 B 站搜索，song id 传 BV 号。"""
+        cmd = cmd or api_type  # "rvc" / "svc" / "rvcb" / "svcb"
+        args = event.message_str.replace(cmd, "", 1).strip().split()
+        args, separator_pref, big_reverb = split_flags(args)
         
         if not args:
-            yield event.plain_result(f"用法: /{cmd} <歌名> [升降调]")
+            subject = "关键词或 BV 号" if source == "bili" else "歌名"
+            yield event.plain_result(
+                f"用法: /{cmd} <{subject}> [升降调] [msst|hp] [大混响]\n"
+                "msst 用 MSST BS-Roformer 分离、hp 用 VR-HP5（不加则跟随 /设置分离模型）；"
+                "末尾加 大混响 会给这一首叠混响 8 + 回声 5"
+            )
             return
 
         key_shift, song_name = 0, " ".join(args)
@@ -206,41 +374,83 @@ class MusicPlugin(Star):
             except ValueError: pass
         
         if not song_name:
-            yield event.plain_result("请输入歌名！")
+            yield event.plain_result("请输入歌名！" if source == "netease" else "请输入要搜索的视频关键词！")
             return
 
-        songs = await self.api.fetch_data(keyword=song_name, limit=10)
-        if not songs:
-            yield event.plain_result("没能找到这首歌喵~")
-            return
-        
-        # --- 步骤 1: 等待用户选择歌曲 ---
-        await self._send_selection(event, songs)
-        yield event.plain_result(f"请在{self.timeout}秒内输入歌曲序号进行选择：")
-        
-        selected_song_index = None
+        # --- 步骤 1: 确定素材（B 站可以直接贴 BV 号跳过搜索） ---
         id = event.get_sender_id()
-        
-        @session_waiter(timeout=self.timeout)
-        async def song_waiter(controller: SessionController, event: AstrMessageEvent):
-            if event.get_sender_id() != id:
-                return            
-            nonlocal selected_song_index
-            user_input = event.message_str.strip()
-            if user_input.isdigit() and 1 <= int(user_input) <= len(songs):
-                selected_song_index = int(user_input) - 1
-                controller.stop()
+        direct_bv = parse_bv(song_name) if source == "bili" else None
 
-        try:
-            await song_waiter(event)
-        except TimeoutError:
-            yield event.plain_result("选择超时，操作已取消。")
-            return
-        
-        if selected_song_index is None:
-             return
-             
-        selected_song = songs[selected_song_index]
+        if direct_bv:
+            try:
+                selected_song = await fetch_video_meta(direct_bv)
+            except Exception as error:
+                logger.error(traceback.format_exc())
+                logger.warning(f"按 BV 号取视频信息失败: {error}")
+                selected_song = {
+                    "id": direct_bv,
+                    "name": f"B站视频 {direct_bv}",
+                    "artists": "",
+                    "duration": "",
+                    "play": "",
+                }
+            yield event.plain_result(f"已识别视频：{selected_song['name']}（{selected_song['id']}）")
+        else:
+            if source == "bili":
+                try:
+                    songs = await search_bili_videos(song_name, limit=16)
+                except Exception as error:
+                    logger.error(traceback.format_exc())
+                    yield event.plain_result(f"B 站搜索失败了: {error}")
+                    return
+                if not songs:
+                    yield event.plain_result("没能找到这个视频喵~")
+                    return
+                board = None
+                try:
+                    board = await asyncio.to_thread(build_bili_board, songs)
+                except Exception as error:
+                    logger.error(traceback.format_exc())
+                if board:
+                    await event.send(event.chain_result([CompImage.fromFileSystem(board)]))
+                    try:
+                        os.remove(board)
+                    except OSError:
+                        pass
+                    yield event.plain_result(f"请回复序号（1-{len(songs)}），{self.timeout} 秒内：")
+                else:
+                    await self._send_selection(event, songs)
+                    yield event.plain_result(f"封面图生成失败，请回复序号（1-{len(songs)}），{self.timeout} 秒内：")
+            else:
+                songs = await self.api.fetch_data(keyword=song_name, limit=10)
+                if not songs:
+                    yield event.plain_result("没能找到这首歌喵~")
+                    return
+                await self._send_selection(event, songs)
+                yield event.plain_result(f"请在{self.timeout}秒内输入歌曲序号进行选择：")
+
+            selected_song_index = None
+
+            @session_waiter(timeout=self.timeout)
+            async def song_waiter(controller: SessionController, event: AstrMessageEvent):
+                if event.get_sender_id() != id:
+                    return
+                nonlocal selected_song_index
+                user_input = event.message_str.strip()
+                if user_input.isdigit() and 1 <= int(user_input) <= len(songs):
+                    selected_song_index = int(user_input) - 1
+                    controller.stop()
+
+            try:
+                await song_waiter(event)
+            except TimeoutError:
+                yield event.plain_result("选择超时，操作已取消。")
+                return
+
+            if selected_song_index is None:
+                return
+
+            selected_song = songs[selected_song_index]
 
         # --- 步骤 2: 等待用户选择模型 ---
         display_str, keys = self.get_models_display_list(api_type=api_type)
@@ -281,8 +491,10 @@ class MusicPlugin(Star):
         selected_model = keys[selected_model_index]
 
         # --- 步骤 3: 执行翻唱 ---
-        yield event.plain_result(f"好的！正在使用 {api_type.upper()} 模型【{selected_model}】为您生成《{selected_song['name']}》，请耐心等待...")
-        await self._send_song(event=event, song=selected_song, model_name=selected_model, key_shift=key_shift, api_type=api_type)
+        separator_note = f"，分离模型用 {SEPARATOR_LABELS[separator_pref]}（本次）" if separator_pref else ""
+        reverb_note = f"，本次启用大混响（混响 {BIG_REVERB_INTENSITY} / 回声 {BIG_REVERB_DELAY}）" if big_reverb else ""
+        yield event.plain_result(f"好的！正在使用 {api_type.upper()} 模型【{selected_model}】{separator_note}{reverb_note} 为您生成《{selected_song['name']}》，请耐心等待...")
+        await self._send_song(event=event, song=selected_song, model_name=selected_model, key_shift=key_shift, api_type=api_type, separator_pref=separator_pref, big_reverb=big_reverb)
 
     async def _send_selection(self, event: AstrMessageEvent, songs: list):
         formatted_songs = [f"{i + 1}. {s['name']} - {s['artists']}" for i, s in enumerate(songs[:10])]
@@ -294,12 +506,19 @@ class MusicPlugin(Star):
         )
         await event.send(event.chain_result([node]))
 
-    async def _send_song(self, event: AstrMessageEvent, song: dict, model_name: str, key_shift: int, api_type="rvc"):
+    async def _send_song(self, event: AstrMessageEvent, song: dict, model_name: str, key_shift: int, api_type="rvc", separator_pref=None, big_reverb=False):
         """根据 API 类型调用对应的后端"""
+        started_at = time.perf_counter()
         result_path = None
         try:
             base_url = self.svc_base_url if api_type == "svc" else self.rvc_base_url
-            client = Client(base_url)
+            client = Client(prepare_api_url(base_url))
+            # 不带 大混响 时不传这两个参数，保持后端滑条的默认（混响 4 / 回声 0）
+            effect_params = (
+                {"reverb_intensity": BIG_REVERB_INTENSITY, "delay_intensity": BIG_REVERB_DELAY}
+                if big_reverb
+                else {}
+            )
             result_path = await self._async_predict(
                 client,
                 song_name_src=str(song["id"]),
@@ -307,11 +526,18 @@ class MusicPlugin(Star):
                 vocal_vol=0,
                 inst_vol=0,
                 model_dropdown=model_name,
+                uvr_choice=self._resolve_uvr_choice(base_url, separator_pref),
+                **effect_params,
                 api_name="/convert",
                 timeout=self.inference_timeout
             )
             if result_path and os.path.exists(result_path):
-                await event.send(event.chain_result([Record(file=result_path)]))
+                elapsed = format_elapsed_seconds(time.perf_counter() - started_at)
+                await event.send(event.plain_result(f"✅ 翻唱完成，总用时：{elapsed}"))
+                task = asyncio.create_task(self._send_result_audio(event, result_path))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+                result_path = None
             else:
                 await event.send(event.plain_result(f"生成失败，后端未返回有效文件路径。"))
         except Exception as e:

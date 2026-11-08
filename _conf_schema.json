@@ -46,5 +46,15 @@
     "type": "list",
     "hint": "这是一个列表，每行一个模型。格式为 '模型文件名|||别名'。如果|||后面为空，则直接显示文件名。使用 /刷新svc模型 命令自动获取",
     "default": []
+  },
+  "separator_model": {
+    "description": "默认人声分离模型",
+    "type": "string",
+    "options": [
+      "VR-HP5 (默认)",
+      "MSST BS-Roformer"
+    ],
+    "hint": "不带 msst / hp 标记时用这个。VR-HP5 快（10 秒级），MSST BS-Roformer 分离更干净但更慢、更吃显存；单条命令末尾加 msst / hp 可临时覆盖。改完保存即生效，无需重载",
+    "default": "VR-HP5 (默认)"
   }
 }
