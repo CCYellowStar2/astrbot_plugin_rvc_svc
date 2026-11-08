@@ -96,8 +96,10 @@
 字体使用 `assets/NotoSansCJKsc-Regular.ttf`（Noto Sans CJK SC 的**子集**，SIL OFL 1.1，见 `assets/NOTO-LICENSE.txt`）。
 容器里默认没有中文字体，不附带这个文件就会渲染成方块。
 
-该文件已用 fontTools 子集化：**GB2312 全集（6763 汉字 + 全角符号）+ ASCII + 常用中文标点**，15.7 MB → 3.4 MB。
-日常视频标题、UP 主名基本不会缺字；极端生僻字（如「龘」「靐」）会渲染成方块，属预期取舍。
+该文件已用 fontTools 子集化：**GBK 全集（22097 字，含繁体）+ ASCII + 中文标点/全角符号**，
+并去掉 OpenType 布局表（GSUB/GPOS/GDEF，只影响西文连字与字距微调），15.7 MB → **5.8 MB**。
+实测常见标题、UP 主名、繁体人名（黄霄雲、臺灣）都不缺字；emoji 与极冷僻字仍会显示成方块
+（字体本身没有 emoji 字形，改用完整字体也一样）。
 
 ## 📌 使用示例
 
