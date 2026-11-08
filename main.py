@@ -136,10 +136,18 @@ class MusicPlugin(Star):
                 return (parts[1].strip() if len(parts) > 1 and parts[1].strip() else os.path.splitext(model_name)[0])
         return os.path.splitext(str(model_name or ""))[0] or "AI 歌手"
 
+    @staticmethod
+    def _supports_music_card(event: AstrMessageEvent) -> bool:
+        """音乐卡片只有 OneBot(aiocqhttp) 能发，其他平台直接发文件，不做无谓尝试。"""
+        try:
+            return event.get_platform_name() == "aiocqhttp"
+        except Exception:
+            return False
+
     async def _send_result_audio(self, event: AstrMessageEvent, result_path: str, song: dict | None = None,
                                  voice_name: str = ""):
         sent_as_card = False
-        if self.config.get("music_card", True):
+        if self.config.get("music_card", True) and self._supports_music_card(event):
             try:
                 await self._send_music_card(event, result_path, song or {}, voice_name)
                 sent_as_card = True
