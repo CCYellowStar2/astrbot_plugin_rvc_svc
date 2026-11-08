@@ -7,6 +7,7 @@
 
 import json
 import os
+import time
 
 import requests
 from astrbot.api import logger
@@ -71,26 +72,53 @@ def _upload_pomf2(path: str) -> str:
 
 
 def upload_audio(path: str) -> str:
-    """上传到临时存储并回验直链，返回可被 QQ 解析的音频地址。"""
+    """上传到临时存储并回验直链，返回可被 QQ 解析的音频地址。
+
+    每个源尝试两次（临时存储偶尔 502，重试基本能过）。
+    """
     if not os.path.isfile(path):
         raise CardError(f"文件不存在: {path}")
 
     errors = []
     for name, uploader in (("uguu", _upload_uguu), ("pomf2", _upload_pomf2)):
-        try:
-            url = uploader(path)
-            if _verify_audio(url):
-                logger.info(f"音频已上传到 {name}: {url}")
-                return url
-            errors.append(f"{name}: 直链不是音频")
-        except Exception as error:
-            errors.append(f"{name}: {type(error).__name__} {error}")
+        for attempt in range(1, 3):
+            try:
+                url = uploader(path)
+                if _verify_audio(url):
+                    logger.info(f"音频已上传到 {name}: {url}")
+                    return url
+                errors.append(f"{name}(第{attempt}次): 直链不是音频")
+            except Exception as error:
+                errors.append(f"{name}(第{attempt}次): {type(error).__name__} {error}")
+            if attempt == 1:
+                time.sleep(1)
     raise CardError("临时上传全部失败 -> " + " | ".join(errors))
 
 
+def _sign_once(ark_api: str, params: dict) -> dict:
+    response = requests.get(ark_api or DEFAULT_ARK_API, params=params, headers=_UA, timeout=40)
+    if response.status_code != 200:
+        raise CardError(f"签名服务 HTTP {response.status_code}")
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise CardError(f"签名服务返回非 JSON（多半是网关错误页）: {response.text[:80]}") from error
+    if payload.get("code") != 200:
+        raise CardError(f"签名失败: {payload.get('code')} {payload.get('msg')}")
+    data = payload.get("data") or {}
+    if not isinstance(data, dict) or not _REQUIRED_CARD_FIELDS.issubset(data):
+        raise CardError("签名返回的卡片结构不完整")
+    return data
+
+
 def sign_ark(ark_api: str, ark_key: str, audio_url: str, title: str, singer: str,
-             cover: str = "", jump: str = "", card_format: str = "qq") -> dict:
-    """调签名服务换取可渲染的卡片结构化数据。"""
+             cover: str = "", jump: str = "", card_format: str = "qq",
+             attempts: int = 3) -> dict:
+    """调签名服务换取可渲染的卡片结构化数据（默认最多试 3 次 = 首试 + 重试 2 次）。
+
+    参数错误（400，比如 format 不被支持）不重试，重试的是网络抖动、网关 5xx、
+    以及服务端偶发的 code=500。每次重试间隔 1s、2s。
+    """
     if not ark_key:
         raise CardError("未配置 ark_key")
     params = {
@@ -102,16 +130,41 @@ def sign_ark(ark_api: str, ark_key: str, audio_url: str, title: str, singer: str
         "jump": jump or audio_url,
         "format": card_format or "qq",
     }
-    response = requests.get(ark_api or DEFAULT_ARK_API, params=params, headers=_UA, timeout=40)
-    if response.status_code != 200:
-        raise CardError(f"签名服务 HTTP {response.status_code}")
-    payload = response.json()
-    if payload.get("code") != 200:
-        raise CardError(f"签名失败: {payload.get('code')} {payload.get('msg')}")
-    data = payload.get("data") or {}
-    if not isinstance(data, dict) or not _REQUIRED_CARD_FIELDS.issubset(data):
-        raise CardError("签名返回的卡片结构不完整")
-    return data
+
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _sign_once(ark_api, params)
+        except Exception as error:
+            last_error = error
+            message = str(error)
+            # 明确的参数错误，重试没有意义
+            if "HTTP 400" in message or "format参数无效" in message:
+                raise CardError(f"{message}（format={params['format']}）") from error
+            logger.warning(f"签名第 {attempt} 次失败: {message}")
+            if attempt < attempts:
+                time.sleep(attempt)
+    raise CardError(f"签名重试 {attempts} 次仍失败: {last_error}")
+
+
+def fetch_netease_cover(song_id) -> str:
+    """网易云那条路没有封面，这里补一个（签名服务要求 cover 非空）。"""
+    text = str(song_id or "").strip()
+    if not text.isdigit():
+        return ""
+    try:
+        response = requests.get(
+            "http://music.163.com/api/song/detail",
+            params={"ids": f"[{text}]"},
+            headers={**_UA, "Referer": "http://music.163.com"},
+            timeout=15,
+        )
+        songs = (response.json() or {}).get("songs") or []
+        if songs:
+            return str(((songs[0] or {}).get("album") or {}).get("picUrl") or "")
+    except Exception as error:
+        logger.warning(f"取网易云封面失败: {error}")
+    return ""
 
 
 async def send_json_card(event, card: dict) -> bool:

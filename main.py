@@ -18,6 +18,7 @@ from .api_url import prepare_api_url
 from .card_sender import (
     DEFAULT_ARK_API,
     CardError,
+    fetch_netease_cover,
     send_json_card,
     sign_ark,
     upload_audio,
@@ -145,6 +146,9 @@ class MusicPlugin(Star):
         title = (song.get("name") or "AI 翻唱").strip()
         singer = (song.get("artists") or "").strip()
         cover = song.get("pic") or ""
+        if not cover:
+            # 签名服务要求 cover 非空；网易云那条路没有封面，补取一次
+            cover = await asyncio.to_thread(fetch_netease_cover, song.get("id"))
 
         audio_url = await asyncio.to_thread(upload_audio, result_path)
         card = await asyncio.to_thread(

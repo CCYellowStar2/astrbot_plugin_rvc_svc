@@ -80,9 +80,10 @@
     "type": "string",
     "options": [
       "qq",
-      "bilibili"
+      "bilibili",
+      "163"
     ],
-    "hint": "qq / bilibili 都能签名成功；163 目前签名失败率高，暂不提供",
+    "hint": "qq / bilibili 实测可签；163 目前服务端一律返回 500（重试 3 次仍失败），选中后会退化为发文件",
     "default": "qq"
   }
 }
