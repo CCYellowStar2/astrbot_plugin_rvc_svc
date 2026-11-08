@@ -212,15 +212,16 @@ class MusicPlugin(Star):
             key_list.append(model_name)
         return "\n".join(display_names), key_list
 
-    def _fetch_separator_models(self, base_url: str | None = None) -> list[str]:
+    async def _fetch_separator_models(self, base_url: str | None = None) -> list[str]:
         # 分离模型列表按「当前使用的后端」去取，取不到再交叉兜底，
         # 避免只用 SVC 时因为连不上 RVC 而整条 /svc 流程失败。
+        # 注意：gradio_client.Client(url) 构造时会同步发 HTTP 请求，必须丢线程池。
         primary = base_url or self.rvc_base_url
         candidates = [primary, self.svc_base_url if primary == self.rvc_base_url else self.rvc_base_url]
         last_error = None
         for candidate in candidates:
             try:
-                client = Client(prepare_api_url(candidate))
+                client = await asyncio.to_thread(Client, prepare_api_url(candidate))
                 return extract_separator_models(client.config)
             except Exception as error:
                 last_error = error
@@ -241,14 +242,14 @@ class MusicPlugin(Star):
             self.config.save_config()
         return selected_model
 
-    def _get_active_separator_model(self, base_url: str | None = None) -> str:
-        return self._resolve_separator_model(self._fetch_separator_models(base_url))
+    async def _get_active_separator_model(self, base_url: str | None = None) -> str:
+        return self._resolve_separator_model(await self._fetch_separator_models(base_url))
 
-    def _resolve_uvr_choice(self, base_url: str, preference: str | None = None) -> str:
+    async def _resolve_uvr_choice(self, base_url: str, preference: str | None = None) -> str:
         """本次用哪个分离模型：没指定就跟随配置里的默认值。"""
         if not preference:
-            return self._get_active_separator_model(base_url)
-        models = self._fetch_separator_models(base_url)
+            return await self._get_active_separator_model(base_url)
+        models = await self._fetch_separator_models(base_url)
         keywords = ("msst", "roformer") if preference == "msst" else ("hp", "karaoke")
         for model in models:
             name = model.lower()
@@ -264,7 +265,7 @@ class MusicPlugin(Star):
     async def _update_models_from_api(self, api_type="rvc"):
         """从指定的 API 更新模型列表"""
         base_url = self.svc_base_url if api_type == "svc" else self.rvc_base_url
-        client = Client(prepare_api_url(base_url))
+        client = await asyncio.to_thread(Client, prepare_api_url(base_url))
         try:
             model_list_from_api = await self._async_predict(client, api_name="/show_model")
         except Exception:
@@ -297,7 +298,7 @@ class MusicPlugin(Star):
     @filter.command("分离模型列表")
     async def list_separator_models(self, event: AstrMessageEvent):
         try:
-            models = self._fetch_separator_models()
+            models = await self._fetch_separator_models()
             selected_model = self._resolve_separator_model(models)
             yield event.plain_result(self._separator_models_message(models, selected_model))
         except Exception as error:
@@ -308,7 +309,7 @@ class MusicPlugin(Star):
     @filter.command("设置分离模型")
     async def set_separator_model(self, event: AstrMessageEvent):
         try:
-            models = self._fetch_separator_models()
+            models = await self._fetch_separator_models()
             selected_model = self._resolve_separator_model(models)
             args = event.message_str.replace("设置分离模型", "", 1).strip().split()
             if len(args) != 1 or not args[0].isdigit():
@@ -589,7 +590,8 @@ class MusicPlugin(Star):
         result_path = None
         try:
             base_url = self.svc_base_url if api_type == "svc" else self.rvc_base_url
-            client = Client(prepare_api_url(base_url))
+            # gradio_client.Client(url) 构造时会同步拉后端 config，必须丢线程池，否则卡事件循环
+            client = await asyncio.to_thread(Client, prepare_api_url(base_url))
             # 不带 大混响 时不传这两个参数，保持后端滑条的默认（混响 4 / 回声 0）
             effect_params = (
                 {"reverb_intensity": BIG_REVERB_INTENSITY, "delay_intensity": BIG_REVERB_DELAY}
@@ -603,7 +605,7 @@ class MusicPlugin(Star):
                 vocal_vol=clamp_db(self.config.get("vocal_vol", 0)),
                 inst_vol=clamp_db(self.config.get("inst_vol", 0)),
                 model_dropdown=model_name,
-                uvr_choice=self._resolve_uvr_choice(base_url, separator_pref),
+                uvr_choice=await self._resolve_uvr_choice(base_url, separator_pref),
                 **effect_params,
                 api_name="/convert",
                 timeout=self.inference_timeout

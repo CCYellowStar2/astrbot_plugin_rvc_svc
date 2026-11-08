@@ -1,10 +1,6 @@
 import json
 import aiohttp
-from astrbot import logger
-
-# 偷来的key
-PARAMS = "D33zyir4L/58v1qGPcIPjSee79KCzxBIBy507IYDB8EL7jEnp41aDIqpHBhowfQ6iT1Xoka8jD+0p44nRKNKUA0dv+n5RWPOO57dZLVrd+T1J/sNrTdzUhdHhoKRIgegVcXYjYu+CshdtCBe6WEJozBRlaHyLeJtGrABfMOEb4PqgI3h/uELC82S05NtewlbLZ3TOR/TIIhNV6hVTtqHDVHjkekrvEmJzT5pk1UY6r0="
-ENC_SEC_KEY = "45c8bcb07e69c6b545d3045559bd300db897509b8720ee2b45a72bf2d3b216ddc77fb10daec4ca54b466f2da1ffac1e67e245fea9d842589dc402b92b262d3495b12165a721aed880bf09a0a99ff94c959d04e49085dc21c78bbbe8e3331827c0ef0035519e89f097511065643120cbc478f9c0af96400ba4649265781fc9079"
+from astrbot.api import logger
 
 
 class NetEaseMusicAPI:
@@ -59,16 +55,6 @@ class NetEaseMusicAPI:
             }
             for song in result["result"]["songs"][:limit]
         ]
-
-    async def fetch_comments(self, song_id: int):
-        """获取热评"""
-        url = f"https://music.163.com/weapi/v1/resource/hotcomments/R_SO_4_{song_id}?csrf_token="
-        data = {
-            "params": PARAMS,
-            "encSecKey": ENC_SEC_KEY,
-        }
-        result = await self._request(url, data=data, method="POST")
-        return result.get("hotComments", [])
 
     async def fetch_lyrics(self, song_id):
         """获取歌词"""
@@ -130,16 +116,6 @@ class NetEaseMusicAPINodeJs:
         ]
 
         return res
-
-    async def fetch_comments(self, song_id: int):
-        """获取热评"""
-        url = "/comment/hot"
-        data = {
-            "id": song_id,
-            "type": 0,
-        }
-        result = await self._request(url, data=data, method="POST")
-        return result.get("hotComments", [])
 
     async def fetch_lyrics(self, song_id):
         """获取歌词"""

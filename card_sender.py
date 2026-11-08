@@ -99,9 +99,6 @@ _UPLOADERS = (("uguu", _upload_uguu), ("pomf2", _upload_pomf2))
 
 
 def _upload_with_retry(path: str, mime: str, kind: str) -> str:
-    """两个源 × 各试两次；上传成功即返回，直链预检只作提示（真正的判据是签名服务）。"""
-    errors = []
-def _upload_with_retry(path: str, mime: str, kind: str) -> str:
     """两个源 × 各试两次；上传成功即返回，直链预检只作提示（真正的判据是签名服务）。
 
     kind 必须是 "audio" 或 "image"（校验逻辑按它分支），日志里用中文标签显示。
