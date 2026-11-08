@@ -470,7 +470,7 @@ class MusicPlugin(Star):
                     songs = await search_bili_videos(song_name, limit=16)
                 except Exception as error:
                     logger.error(traceback.format_exc())
-                    yield event.plain_result(f"B 站搜索失败了: {error}")
+                    yield event.plain_result(f"B 站搜索失败了（已自动重试 3 次）: {error}\n稍后再试，或改用 /svc 从网易云搜。")
                     return
                 if not songs:
                     yield event.plain_result("没能找到这个视频喵~")

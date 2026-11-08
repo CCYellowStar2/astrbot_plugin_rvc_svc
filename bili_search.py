@@ -1,5 +1,6 @@
 """B 站视频搜索、BV 号解析，以及把结果拼成两栏长图。"""
 
+import asyncio
 import html
 import os
 import re
@@ -89,15 +90,59 @@ async def fetch_video_meta(bvid: str) -> dict:
     return _to_video(payload.get("data") or {})
 
 
-async def search_videos(keyword: str, limit: int = 16) -> list:
-    """用 bilibili_api 搜索视频（自带 wbi 签名）。"""
+_TRANSPORT_READY = False
+
+
+def _prepare_transport() -> None:
+    """给 bilibili_api 设一些更抗抖的传输参数（只需一次）。"""
+    global _TRANSPORT_READY
+    if _TRANSPORT_READY:
+        return
+    try:
+        from bilibili_api import request_settings
+
+        request_settings.set_timeout(20)
+        try:
+            # 不吃系统代理环境变量，避免被本地代理/分流打断 TLS
+            request_settings.set_trust_env(False)
+        except Exception:
+            pass
+    except Exception as error:
+        logger.warning(f"设置 bilibili_api 传输参数失败: {error}")
+    _TRANSPORT_READY = True
+
+
+async def search_videos(keyword: str, limit: int = 16, attempts: int = 3) -> list:
+    """用 bilibili_api 搜索视频（自带 wbi 签名）。
+
+    B 站偶尔会在 TLS 握手阶段直接掐断连接（curl: (35) BoringSSL SSL_connect:
+    Connection closed abruptly），属于风控/网络抖动，重试通常就好了，所以这里带退避重试。
+    """
     from bilibili_api import search
 
-    result = await search.search_by_type(
-        keyword,
-        search_type=search.SearchObjectType.VIDEO,
-        page=1,
-    )
+    _prepare_transport()
+
+    result = None
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            result = await search.search_by_type(
+                keyword,
+                search_type=search.SearchObjectType.VIDEO,
+                page=1,
+            )
+            break
+        except Exception as error:
+            last_error = error
+            logger.warning(f"B站搜索第 {attempt}/{attempts} 次失败: {type(error).__name__} {error}")
+            if attempt < attempts:
+                await asyncio.sleep(attempt)
+
+    if result is None:
+        raise RuntimeError(
+            f"B站搜索连续 {attempts} 次失败（多为网络或风控）：{type(last_error).__name__}: {last_error}"
+        )
+
     videos = []
     for item in (result.get("result") or [])[:limit]:
         bvid = str(item.get("bvid") or "").strip()
