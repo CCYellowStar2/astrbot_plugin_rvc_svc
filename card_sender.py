@@ -37,20 +37,29 @@ class CardError(Exception):
 
 # ---------------- 上传 + 校验 ----------------
 
-def _verify_media(url: str, kind: str = "audio") -> bool:
-    """确认直链返回的是原始媒体字节，而不是 HTML 下载页。"""
+def _verify_media(url: str, kind: str = "audio") -> tuple:
+    """探一下直链返回的是不是原始媒体字节，返回 (是否通过, 说明)。
+
+    只取前 2KB（Range），避免为了校验把整个文件拖下来；
+    校验结果只当参考——真正的判据是签名服务能不能吃下这个地址，
+    所以调用方不会因为它失败就放弃（见 _upload_with_retry）。
+    """
+    headers = {**_UA, "Accept-Encoding": "identity", "Range": "bytes=0-2047"}
     try:
-        response = requests.get(url, headers=_UA, timeout=20, stream=True)
+        response = requests.get(url, headers=headers, timeout=20, stream=True)
         content_type = response.headers.get("Content-Type", "")
-        head = next(response.iter_content(9), b"")
-        if response.status_code != 200:
-            return False
+        head = next(response.iter_content(16), b"")
+        response.close()
+        detail = f"HTTP {response.status_code} {content_type or '(无类型)'} 首字节={head[:12]!r}"
+        if response.status_code not in (200, 206):
+            return False, detail
         if kind == "audio":
-            return "audio" in content_type or head.startswith(b"ID3")
-        return "image" in content_type or head.startswith(b"\xff\xd8") or head.startswith(b"\x89PNG")
+            ok = "audio" in content_type or head.startswith(b"ID3") or head[:2] in (b"\xff\xfb", b"\xff\xf3")
+        else:
+            ok = "image" in content_type or head.startswith(b"\xff\xd8") or head.startswith(b"\x89PNG")
+        return ok, detail
     except Exception as error:
-        logger.warning(f"{kind} 直链校验失败 {url}: {error}")
-        return False
+        return False, f"{type(error).__name__}: {error}"
 
 
 def _upload_uguu(path: str, mime: str = "audio/mpeg") -> str:
@@ -90,20 +99,23 @@ _UPLOADERS = (("uguu", _upload_uguu), ("pomf2", _upload_pomf2))
 
 
 def _upload_with_retry(path: str, mime: str, kind: str) -> str:
-    """两个源 × 各试两次（临时存储偶发 502）。"""
+    """两个源 × 各试两次；上传成功即返回，直链预检只作提示（真正的判据是签名服务）。"""
     errors = []
     for name, uploader in _UPLOADERS:
         for attempt in range(1, 3):
             try:
                 url = uploader(path, mime)
-                if _verify_media(url, kind):
-                    logger.info(f"{kind} 已上传到 {name}: {url}")
-                    return url
-                errors.append(f"{name}(第{attempt}次): 直链不是{kind}")
             except Exception as error:
                 errors.append(f"{name}(第{attempt}次): {type(error).__name__} {error}")
-            if attempt == 1:
-                time.sleep(1)
+                if attempt == 1:
+                    time.sleep(1)
+                continue
+            ok, detail = _verify_media(url, kind)
+            if ok:
+                logger.info(f"{kind} 已上传到 {name}: {url}")
+            else:
+                logger.warning(f"{kind} 直链预检没过（{detail}），仍交给签名服务判定: {url}")
+            return url
     raise CardError(f"{kind} 临时上传全部失败 -> " + " | ".join(errors))
 
 
