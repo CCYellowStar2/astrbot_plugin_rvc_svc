@@ -119,11 +119,21 @@ class MusicPlugin(Star):
         fn = partial(job.result, timeout=timeout)
         return await loop.run_in_executor(None, fn)
 
-    async def _send_result_audio(self, event: AstrMessageEvent, result_path: str, song: dict | None = None):
+    def _voice_display_name(self, model_name: str, api_type: str) -> str:
+        """把模型文件名换成展示用的歌手名：优先用配置里的别名，否则用去扩展名的文件名。"""
+        models_keywords = self.svc_models_keywords if api_type == "svc" else self.rvc_models_keywords
+        for item in models_keywords or []:
+            parts = str(item).split(MODEL_ALIAS_SEPARATOR, 1)
+            if parts[0] == model_name:
+                return (parts[1].strip() if len(parts) > 1 and parts[1].strip() else os.path.splitext(model_name)[0])
+        return os.path.splitext(str(model_name or ""))[0] or "AI 歌手"
+
+    async def _send_result_audio(self, event: AstrMessageEvent, result_path: str, song: dict | None = None,
+                                 voice_name: str = ""):
         sent_as_card = False
         if self.config.get("music_card", True):
             try:
-                await self._send_music_card(event, result_path, song or {})
+                await self._send_music_card(event, result_path, song or {}, voice_name)
                 sent_as_card = True
             except Exception as error:
                 logger.warning(f"音乐卡片发送失败，回退为文件: {error}")
@@ -139,13 +149,15 @@ class MusicPlugin(Star):
                 except OSError as error:
                     logger.error(f"删除临时文件失败: {error}")
 
-    async def _send_music_card(self, event: AstrMessageEvent, result_path: str, song: dict):
+    async def _send_music_card(self, event: AstrMessageEvent, result_path: str, song: dict, voice_name: str = ""):
         """上传 -> 签名 -> 发卡片；任何一步失败都抛异常，由调用方回退。"""
         if event.get_platform_name() != "aiocqhttp":
             raise CardError(f"当前平台 {event.get_platform_name()} 不支持音乐卡片")
 
         title = (song.get("name") or "AI 翻唱").strip()
-        singer = (song.get("artists") or "").strip()
+        # 歌手位写「翻唱用的歌手」（模型名/别名），原唱放标题里，避免卡片上显示成原唱
+        original_artist = (song.get("artists") or "").strip()
+        singer = (voice_name or "").strip() or original_artist or "AI 歌手"
         cover = song.get("pic") or ""
         if not cover:
             # 签名服务要求 cover 非空；网易云那条路没有封面，补取一次
@@ -156,19 +168,22 @@ class MusicPlugin(Star):
         )
 
         audio_url = await asyncio.to_thread(upload_audio, result_path)
+        card_title = f"{title}（AI 翻唱）"
+        if original_artist and original_artist != singer:
+            card_title = f"{title}（AI 翻唱 · 原唱 {original_artist}）"
         card = await asyncio.to_thread(
             sign_ark,
             self.config.get("ark_api") or DEFAULT_ARK_API,
             self.config.get("ark_key", ""),
             audio_url,
-            f"{title}（AI 翻唱）",
-            singer or "AI 翻唱",
+            card_title,
+            singer,
             cover,
             audio_url,
             self.config.get("music_card_format", "qq"),
         )
         await send_json_card(event, card)
-        logger.info(f"音乐卡片已发送: {title}")
+        logger.info(f"音乐卡片已发送: {card_title} / 歌手={singer}")
 
     def get_models_display_list(self, api_type="rvc"):
         """获取指定 API 类型的模型显示列表"""
@@ -582,7 +597,11 @@ class MusicPlugin(Star):
             if result_path and os.path.exists(result_path):
                 elapsed = format_elapsed_seconds(time.perf_counter() - started_at)
                 await event.send(event.plain_result(f"✅ 翻唱完成，总用时：{elapsed}"))
-                task = asyncio.create_task(self._send_result_audio(event, result_path, song))
+                task = asyncio.create_task(
+                    self._send_result_audio(
+                        event, result_path, song, self._voice_display_name(model_name, api_type)
+                    )
+                )
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
                 result_path = None
