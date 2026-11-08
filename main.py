@@ -138,7 +138,7 @@ class MusicPlugin(Star):
 
     @staticmethod
     def _supports_music_card(event: AstrMessageEvent) -> bool:
-        """音乐卡片只有 OneBot(aiocqhttp) 能发，其他平台直接发文件，不做无谓尝试。"""
+        """音乐卡片只有 OneBot(aiocqhttp) 能发，其他平台直接发语音，不做无谓尝试。"""
         try:
             return event.get_platform_name() == "aiocqhttp"
         except Exception:
@@ -152,9 +152,12 @@ class MusicPlugin(Star):
                 await self._send_music_card(event, result_path, song or {}, voice_name)
                 sent_as_card = True
             except Exception as error:
-                logger.warning(f"音乐卡片发送失败，回退为文件: {error}")
+                logger.warning(f"音乐卡片发送失败，回退为语音: {error}")
+
+        # voice_also 打开时，卡片发成功也照样补一条语音
+        send_voice = (not sent_as_card) or bool(self.config.get("voice_also", False))
         try:
-            if not sent_as_card:
+            if send_voice:
                 await event.send(event.chain_result([Record(file=result_path)]))
         except Exception:
             logger.error(traceback.format_exc())

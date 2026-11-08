@@ -60,13 +60,19 @@
   "music_card": {
     "description": "翻唱结果用 QQ 音乐卡片发送",
     "type": "bool",
-    "hint": "仅 OneBot(aiocqhttp) 平台生效：成品先上传到临时存储，再用签名服务生成卡片。任一步失败会自动退回语音文件；官方机器人(qq_official)始终发文件",
+    "hint": "仅 OneBot(aiocqhttp) 平台生效：成品先上传到临时存储，再用签名服务生成卡片。任一步失败会自动退回语音；官方机器人(qq_official)始终发语音",
     "default": true
+  },
+  "voice_also": {
+    "description": "卡片发成功时也补发一条语音",
+    "type": "bool",
+    "hint": "关（默认）：只发卡片，失败才发语音；开：卡片和语音都发，既能点开就听、又能留卡片",
+    "default": false
   },
   "ark_key": {
     "description": "音乐卡片签名服务的 key",
     "type": "string",
-    "hint": "留空则不做卡片（直接发文件）",
+    "hint": "留空则不做卡片（直接发语音）",
     "default": ""
   },
   "ark_api": {
@@ -83,7 +89,7 @@
       "bilibili",
       "163"
     ],
-    "hint": "qq / bilibili 实测可签；163 目前服务端一律返回 500（重试 3 次仍失败），选中后会退化为发文件",
+    "hint": "qq / bilibili 实测可签；163 目前服务端一律返回 500（重试 3 次仍失败），选中后会退化为发语音",
     "default": "qq"
   },
   "vocal_vol": {
