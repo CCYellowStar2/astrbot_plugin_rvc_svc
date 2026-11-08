@@ -149,6 +149,9 @@ class MusicPlugin(Star):
         if not cover:
             # 签名服务要求 cover 非空；网易云那条路没有封面，补取一次
             cover = await asyncio.to_thread(fetch_netease_cover, song.get("id"))
+        if not cover:
+            # 空 cover 时服务端会回「缺少必要参数: url, song, singer, cover, ...」，极易误导，先自己拦下
+            raise CardError("没有封面（签名服务要求 cover 非空），本次改为发文件")
 
         audio_url = await asyncio.to_thread(upload_audio, result_path)
         card = await asyncio.to_thread(
