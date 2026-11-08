@@ -18,6 +18,7 @@ from .api_url import prepare_api_url
 from .card_sender import (
     DEFAULT_ARK_API,
     CardError,
+    ensure_cover,
     fetch_netease_cover,
     send_json_card,
     sign_ark,
@@ -149,9 +150,10 @@ class MusicPlugin(Star):
         if not cover:
             # 签名服务要求 cover 非空；网易云那条路没有封面，补取一次
             cover = await asyncio.to_thread(fetch_netease_cover, song.get("id"))
-        if not cover:
-            # 空 cover 时服务端会回「缺少必要参数: url, song, singer, cover, ...」，极易误导，先自己拦下
-            raise CardError("没有封面（签名服务要求 cover 非空），本次改为发文件")
+        # 还没有就用兜底：配置里的公共图片地址，或内置默认封面（首次上传后进程内缓存）
+        cover = await asyncio.to_thread(
+            ensure_cover, cover, self.config.get("card_fallback_cover", "")
+        )
 
         audio_url = await asyncio.to_thread(upload_audio, result_path)
         card = await asyncio.to_thread(
