@@ -148,7 +148,11 @@ def sign_ark(ark_api: str, ark_key: str, audio_url: str, title: str, singer: str
 
 
 def fetch_netease_cover(song_id) -> str:
-    """网易云那条路没有封面，这里补一个（签名服务要求 cover 非空）。"""
+    """网易云那条路没有封面，这里补一个（签名服务要求 cover 非空）。
+
+    网易云原始 picUrl 是 http，而且动辄好几 MB（实测 7.1 MB）；
+    这里统一改 https 并追加 ?param=300y300，能压到 ~100 KB。
+    """
     text = str(song_id or "").strip()
     if not text.isdigit():
         return ""
@@ -160,8 +164,13 @@ def fetch_netease_cover(song_id) -> str:
             timeout=15,
         )
         songs = (response.json() or {}).get("songs") or []
-        if songs:
-            return str(((songs[0] or {}).get("album") or {}).get("picUrl") or "")
+        if not songs:
+            return ""
+        pic = str(((songs[0] or {}).get("album") or {}).get("picUrl") or "")
+        if not pic:
+            return ""
+        pic = pic.replace("http://", "https://", 1)
+        return pic if "?" in pic else f"{pic}?param=300y300"
     except Exception as error:
         logger.warning(f"取网易云封面失败: {error}")
     return ""
