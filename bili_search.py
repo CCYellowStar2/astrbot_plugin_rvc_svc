@@ -8,6 +8,7 @@ import tempfile
 from io import BytesIO
 
 import requests
+from astrbot.api import logger
 from PIL import Image, ImageDraw, ImageFont
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
