@@ -36,17 +36,32 @@ MAX_TITLE_LEN = 40
 MAX_SINGER_LEN = 20
 _STRIP_RANGES = ((0x1F000, 0x1FAFF), (0x2600, 0x27BF), (0x2B00, 0x2BFF), (0xFE00, 0xFE0F))
 
+# 实测这些字符会让 QQ 音乐卡片发不出去（retcode=100 无回执），统一换成安全等价物
+_UNSAFE_MAP = {
+    "〜": "~",  # U+301C WAVE DASH
+    "～": "~",  # U+FF5E FULLWIDTH TILDE
+    "·": "-",  # U+00B7 MIDDLE DOT（我们自己模板里原来就用的这个，已踩坑）
+    "・": "-",  # U+30FB KATAKANA MIDDLE DOT
+    "•": "-",  # U+2022 BULLET
+    "｜": "|",
+    "丨": "|",
+    "(": "（",  # 半角括号一律换全角（基线用全角可发）
+    ")": "）",
+}
+
 
 def clean_card_text(text, limit: int) -> str:
-    """清掉控制符 / emoji / 多余空白，并限制长度（超长用省略号收尾）。"""
+    """清掉控制符 / emoji / 多余空白，替换会让卡片失效的符号，并限制长度。"""
     value = re.sub(r"[\x00-\x1f\x7f]", " ", str(text or ""))
     value = re.sub(r"\s+", " ", value).strip()
     value = "".join(
         ch for ch in value if not any(low <= ord(ch) <= high for low, high in _STRIP_RANGES)
     ).strip()
+    value = "".join(_UNSAFE_MAP.get(ch, ch) for ch in value).strip()
     if len(value) > limit:
         value = value[: max(1, limit - 1)] + "…"
     return value
+
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_COVER_PATH = os.path.join(_PLUGIN_DIR, "assets", "default_cover.jpg")

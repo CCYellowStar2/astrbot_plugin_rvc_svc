@@ -196,7 +196,7 @@ class MusicPlugin(Star):
         card_title = clean_card_text(f"{title}（AI 翻唱）", MAX_TITLE_LEN)
         if original_artist and original_artist != singer:
             card_title = clean_card_text(
-                f"{title}（AI 翻唱 · 原唱 {original_artist}）", MAX_TITLE_LEN
+                f"{title}（AI 翻唱 - 原唱 {original_artist}）", MAX_TITLE_LEN
             )
         logger.info(f"卡片文案: 标题={card_title!r}({len(card_title)}) 歌手={singer!r}({len(singer)})")
         card = await asyncio.to_thread(
