@@ -18,6 +18,9 @@ from .api_url import prepare_api_url
 from .card_sender import (
     DEFAULT_ARK_API,
     CardError,
+    MAX_SINGER_LEN,
+    MAX_TITLE_LEN,
+    clean_card_text,
     prepare_cover,
     fetch_netease_cover,
     send_json_card,
@@ -173,10 +176,12 @@ class MusicPlugin(Star):
         if event.get_platform_name() != "aiocqhttp":
             raise CardError(f"当前平台 {event.get_platform_name()} 不支持音乐卡片")
 
-        title = (song.get("name") or "AI 翻唱").strip()
+        title = clean_card_text(song.get("name") or "AI 翻唱", MAX_TITLE_LEN) or "AI 翻唱"
         # 歌手位写「翻唱用的歌手」（模型名/别名），原唱放标题里，避免卡片上显示成原唱
-        original_artist = (song.get("artists") or "").strip()
-        singer = (voice_name or "").strip() or original_artist or "AI 歌手"
+        original_artist = clean_card_text((song.get("artists") or "").strip(), MAX_SINGER_LEN)
+        singer = clean_card_text(
+            (voice_name or "").strip() or original_artist or "AI 歌手", MAX_SINGER_LEN
+        ) or "AI 歌手"
         cover = song.get("pic") or ""
         if not cover:
             # 签名服务要求 cover 非空；网易云那条路没有封面，补取一次
@@ -188,9 +193,12 @@ class MusicPlugin(Star):
         cover = await asyncio.to_thread(prepare_cover, cover)
 
         audio_url = await asyncio.to_thread(upload_audio, result_path)
-        card_title = f"{title}（AI 翻唱）"
+        card_title = clean_card_text(f"{title}（AI 翻唱）", MAX_TITLE_LEN)
         if original_artist and original_artist != singer:
-            card_title = f"{title}（AI 翻唱 · 原唱 {original_artist}）"
+            card_title = clean_card_text(
+                f"{title}（AI 翻唱 · 原唱 {original_artist}）", MAX_TITLE_LEN
+            )
+        logger.info(f"卡片文案: 标题={card_title!r}({len(card_title)}) 歌手={singer!r}({len(singer)})")
         card = await asyncio.to_thread(
             sign_ark,
             self.config.get("ark_api") or DEFAULT_ARK_API,

@@ -12,6 +12,7 @@ import asyncio
 import io
 import json
 import os
+import re
 import tempfile
 import time
 
@@ -29,6 +30,23 @@ _UA = {
 _COVER_HEADERS = {**_UA, "Referer": "https://www.bilibili.com/"}
 DEFAULT_ARK_API = "https://apii.xianyuw.cn/api/v1/qq-musicArk"
 _REQUIRED_CARD_FIELDS = {"app", "meta", "prompt", "view"}
+
+# QQ 卡片对标题不宽容：过长、带 emoji、带控制符都可能让卡片渲染失败或被丢弃
+MAX_TITLE_LEN = 40
+MAX_SINGER_LEN = 20
+_STRIP_RANGES = ((0x1F000, 0x1FAFF), (0x2600, 0x27BF), (0x2B00, 0x2BFF), (0xFE00, 0xFE0F))
+
+
+def clean_card_text(text, limit: int) -> str:
+    """清掉控制符 / emoji / 多余空白，并限制长度（超长用省略号收尾）。"""
+    value = re.sub(r"[\x00-\x1f\x7f]", " ", str(text or ""))
+    value = re.sub(r"\s+", " ", value).strip()
+    value = "".join(
+        ch for ch in value if not any(low <= ord(ch) <= high for low, high in _STRIP_RANGES)
+    ).strip()
+    if len(value) > limit:
+        value = value[: max(1, limit - 1)] + "…"
+    return value
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_COVER_PATH = os.path.join(_PLUGIN_DIR, "assets", "default_cover.jpg")
