@@ -9,12 +9,15 @@
 """
 
 import asyncio
+import io
 import json
 import os
+import tempfile
 import time
 
 import requests
 from astrbot.api import logger
+from PIL import Image
 
 _UA = {
     "User-Agent": (
@@ -22,14 +25,18 @@ _UA = {
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 }
+# B 站图片有防盗链，下载时必须带 Referer，否则可能拿到占位图
+_COVER_HEADERS = {**_UA, "Referer": "https://www.bilibili.com/"}
 DEFAULT_ARK_API = "https://apii.xianyuw.cn/api/v1/qq-musicArk"
 _REQUIRED_CARD_FIELDS = {"app", "meta", "prompt", "view"}
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_COVER_PATH = os.path.join(_PLUGIN_DIR, "assets", "default_cover.jpg")
 
-# 进程内缓存：默认封面只需上传一次，后续歌曲复用同一个地址
-_default_cover_url = ""
+# 进程内缓存：封面处理结果（源 URL -> 上传后的直链），防止同一张图反复上传
+_COVER_CACHE: dict = {}
+_COVER_CACHE_LIMIT = 24
+_DEFAULT_COVER_URL = ""
 
 
 class CardError(Exception):
@@ -131,20 +138,91 @@ def upload_audio(path: str) -> str:
     return _upload_with_retry(path, "audio/mpeg", "audio")
 
 
-def ensure_cover(cover: str = "") -> str:
-    """保证有一个可用封面：有原封面就用，没有就用内置默认图（首次上传后缓存）。"""
-    if cover:
-        return cover
+_COVER_TTL = 2 * 3600  # uguu 3 小时删文件，这里提前 1 小时失效重传
+_DEFAULT_COVER_AT = 0.0
 
-    global _default_cover_url
-    if _default_cover_url:
-        return _default_cover_url
+
+def _normalize_cover_bytes(raw: bytes) -> bytes:
+    """把任意图片规范成 300×300 JPEG（居中裁正方形）。
+
+    目的是绕开「封面内容」类问题：网易云原图动辄 7 MB、B 站防盗链会返回占位图、
+    还有 WebP / 带透明通道的 PNG —— 签名服务与 QQ 客户端只吃标准 JPEG。
+    """
+    with Image.open(io.BytesIO(raw)) as img:
+        rgb = img.convert("RGB")
+        width, height = rgb.size
+        side = min(width, height)
+        left = (width - side) // 2
+        top = (height - side) // 2
+        rgb = rgb.crop((left, top, left + side, top + side)).resize((300, 300), Image.LANCZOS)
+        buffer = io.BytesIO()
+        rgb.save(buffer, "JPEG", quality=88, optimize=True)
+        return buffer.getvalue()
+
+
+def _download_cover(url: str, attempts: int = 2) -> bytes:
+    last = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.get(url, headers=_COVER_HEADERS, timeout=20)
+            if response.status_code == 200 and response.content:
+                return response.content
+            last = f"HTTP {response.status_code}（{len(response.content)} 字节）"
+        except Exception as error:
+            last = f"{type(error).__name__} {error}"
+        if attempt < attempts:
+            time.sleep(1)
+    raise CardError(f"封面下载失败: {last}")
+
+
+def _upload_cover_bytes(data: bytes) -> str:
+    handle, path = tempfile.mkstemp(suffix=".jpg", prefix="cover_")
+    os.close(handle)
+    try:
+        with open(path, "wb") as f:
+            f.write(data)
+        return _upload_with_retry(path, "image/jpeg", "image")
+    finally:
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def prepare_cover(cover_url: str = "") -> str:
+    """把封面规范成 300×300 JPEG 后重新上传，返回签名服务能直接用的直链。
+
+    走这一步而不是把原 URL 直接丢给签名服务，是因为封面失败的根因多在「内容」：
+    B 站防盗链占位图、网易云超大原图、WebP/透明 PNG 等。
+    """
+    global _DEFAULT_COVER_URL, _DEFAULT_COVER_AT
+    now = time.time()
+
+    if cover_url:
+        entry = _COVER_CACHE.get(cover_url)
+        if entry and now - entry[1] < _COVER_TTL:
+            return entry[0]
+        try:
+            url = _upload_cover_bytes(_normalize_cover_bytes(_download_cover(cover_url)))
+            if len(_COVER_CACHE) >= _COVER_CACHE_LIMIT:
+                _COVER_CACHE.pop(next(iter(_COVER_CACHE)))
+            _COVER_CACHE[cover_url] = (url, now)
+            logger.info(f"封面已规范化并上传: {cover_url[:70]}")
+            return url
+        except Exception as error:
+            logger.warning(f"封面处理失败，改用默认封面: {error}")
+
+    if _DEFAULT_COVER_URL and now - _DEFAULT_COVER_AT < _COVER_TTL:
+        return _DEFAULT_COVER_URL
     if not os.path.isfile(_DEFAULT_COVER_PATH):
         raise CardError(f"内置默认封面不存在: {_DEFAULT_COVER_PATH}")
-
-    _default_cover_url = _upload_with_retry(_DEFAULT_COVER_PATH, "image/jpeg", "image")
-    logger.info(f"已启用内置默认封面: {_default_cover_url}")
-    return _default_cover_url
+    with open(_DEFAULT_COVER_PATH, "rb") as handle:
+        data = _normalize_cover_bytes(handle.read())
+    _DEFAULT_COVER_URL = _upload_cover_bytes(data)
+    _DEFAULT_COVER_AT = now
+    logger.info(f"已启用内置默认封面: {_DEFAULT_COVER_URL}")
+    return _DEFAULT_COVER_URL
 
 
 # ---------------- 签名 ----------------
