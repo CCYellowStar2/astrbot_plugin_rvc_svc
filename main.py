@@ -317,8 +317,9 @@ class MusicPlugin(Star):
             yield event.plain_result("当前平台不是 OneBot，发不了音乐卡片")
             return
         audio_url = "https://music.163.com/song/media/outer/url?id=1330348068.mp3"
+        # 封面也用网易云公共图床，整个测试不经过 uguu，避免把「临时存储」混进变量
+        cover_url = "https://p2.music.126.net/diGAyEmpymX8G7JcnElncQ==/109951163699673355.jpg?param=300y300"
         try:
-            cover = await asyncio.to_thread(prepare_cover, "")
             card = await asyncio.to_thread(
                 sign_ark,
                 self.config.get("ark_api") or DEFAULT_ARK_API,
@@ -326,12 +327,12 @@ class MusicPlugin(Star):
                 audio_url,
                 "卡片测试（公共音频）",
                 "测试",
-                cover,
+                cover_url,
                 audio_url,
                 self.config.get("music_card_format", "qq"),
             )
             await send_json_card(event, card)
-            yield event.plain_result("✅ 测试卡片已发送（网易云公共直链 + 默认封面）")
+            yield event.plain_result("✅ 测试卡片已发送（网易云公共直链 + 网易云封面，全程不经 uguu）")
         except Exception as error:
             logger.error(traceback.format_exc())
             yield event.plain_result(f"❌ 测试卡片失败: {error}")
