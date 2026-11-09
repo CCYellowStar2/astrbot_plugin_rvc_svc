@@ -312,30 +312,56 @@ class MusicPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("卡片测试")
     async def card_test(self, event: AstrMessageEvent):
-        """发一张「公共音频 + 默认封面」的卡片，用来区分卡片本身与翻唱链路的问题。"""
+        """单变量测试卡片：分别替换 音频 / 封面 / 标题，定位到底是哪一项导致发不出去。
+
+        /卡片测试         公共音频 + 公共封面 + 简单标题（基线，已知可发）
+        /卡片测试 text    同上，但标题换成那首失败的日文长标题
+        /卡片测试 audio   音频换成 uguu 上传的测试音，其余同基线
+        /卡片测试 cover   封面换成 uguu 上传的内置默认封面，其余同基线
+        """
         if not self._supports_music_card(event):
             yield event.plain_result("当前平台不是 OneBot，发不了音乐卡片")
             return
-        audio_url = "https://music.163.com/song/media/outer/url?id=1330348068.mp3"
-        # 封面也用网易云公共图床，整个测试不经过 uguu，避免把「临时存储」混进变量
-        cover_url = "https://p2.music.126.net/diGAyEmpymX8G7JcnElncQ==/109951163699673355.jpg?param=300y300"
+
+        arg = event.message_str.replace("卡片测试", "", 1).strip().lower()
+        mode = arg or "base"
+
+        netease_audio = "https://music.163.com/song/media/outer/url?id=1330348068.mp3"
+        netease_cover = "https://p2.music.126.net/diGAyEmpymX8G7JcnElncQ==/109951163699673355.jpg?param=300y300"
+
+        audio_url, cover_url = netease_audio, netease_cover
+        title = "卡片测试（基线）"
+
         try:
+            if mode == "text":
+                # 不做净化，直接复现失败那首的标题
+                title = "真夜中のドア〜stay with me (シングルver.)（AI 翻唱 · 原唱 松原みき）"
+            elif mode == "audio":
+                tone = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "test_tone.mp3")
+                audio_url = await asyncio.to_thread(upload_audio, tone)
+                title = "卡片测试（uguu 音频）"
+            elif mode == "cover":
+                cover_url = await asyncio.to_thread(prepare_cover, "")
+                title = "卡片测试（uguu 封面）"
+
             card = await asyncio.to_thread(
                 sign_ark,
                 self.config.get("ark_api") or DEFAULT_ARK_API,
                 self.config.get("ark_key", ""),
                 audio_url,
-                "卡片测试（公共音频）",
+                title,
                 "测试",
                 cover_url,
                 audio_url,
                 self.config.get("music_card_format", "qq"),
             )
             await send_json_card(event, card)
-            yield event.plain_result("✅ 测试卡片已发送（网易云公共直链 + 网易云封面，全程不经 uguu）")
+            yield event.plain_result(
+                f"✅ 测试卡片已发送 | 模式={mode} | 标题={title} | 音频={'uguu' if mode == 'audio' else '网易云'} | 封面={'uguu' if mode == 'cover' else '网易云'}"
+            )
         except Exception as error:
             logger.error(traceback.format_exc())
-            yield event.plain_result(f"❌ 测试卡片失败: {error}")
+            yield event.plain_result(f"❌ 测试卡片失败（模式={mode}）: {error}")
 
     @filter.command("分离模型列表")
     async def list_separator_models(self, event: AstrMessageEvent):
