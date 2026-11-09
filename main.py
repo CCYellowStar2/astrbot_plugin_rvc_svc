@@ -336,6 +336,18 @@ class MusicPlugin(Star):
             if mode == "text":
                 # 不做净化，直接复现失败那首的标题
                 title = "真夜中のドア〜stay with me (シングルver.)（AI 翻唱 · 原唱 松原みき）"
+            elif mode == "jp":
+                # 只保留日文假名/汉字，去掉 〜 · 括号 等符号
+                title = "真夜中のドア シングルver 松原みき"
+            elif mode == "long":
+                # 40 个纯中文，测「长度」这一项
+                title = "测" * 40
+            elif mode == "sym":
+                # 只测符号：波浪线 + 间隔号 + 半角括号
+                title = "卡片测试 〜 · ( ) 符号"
+            elif mode.startswith("t:"):
+                # 自由测试：/卡片测试 t:任意标题
+                title = arg[2:].strip()[:80] or "卡片测试（基线）"
             elif mode == "audio":
                 tone = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "test_tone.mp3")
                 audio_url = await asyncio.to_thread(upload_audio, tone)
