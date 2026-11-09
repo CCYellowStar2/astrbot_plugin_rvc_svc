@@ -8,6 +8,7 @@
 所以缺封面时这里会兜底上传一张内置默认封面。
 """
 
+import asyncio
 import json
 import os
 import time
@@ -230,13 +231,39 @@ def fetch_netease_cover(song_id) -> str:
 
 # ---------------- 发送 ----------------
 
-async def send_json_card(event, card: dict) -> bool:
-    """按 OneBot json 段发送卡片（仅 aiocqhttp 平台可用）。"""
+_UNCONFIRMED_HINTS = ("not confirmed", "no message receipt", "未确认")
+
+
+def _is_unconfirmed(error: Exception) -> bool:
+    """QQ 有时收到了 ark 卡片却不给回执，协议端据此判失败——这属于「结果未知」，值得重试。"""
+    text = str(error).lower()
+    if any(hint in str(error) or hint in text for hint in _UNCONFIRMED_HINTS):
+        return True
+    return getattr(error, "retcode", None) == 100
+
+
+async def send_json_card(event, card: dict, attempts: int = 2, delay: float = 2.0) -> bool:
+    """按 OneBot json 段发送卡片（仅 aiocqhttp 平台可用）。
+
+    对「未确认送达」单独重试一次：这种情况下卡片往往已经发出去了，只是没回执，
+    重试的成功率明显高于直接判死。
+    """
     payload = {"message": [{"type": "json", "data": {"data": json.dumps(card, ensure_ascii=False)}}]}
     if event.is_private_chat():
         payload["user_id"] = event.get_sender_id()
-        await event.bot.api.call_action("send_private_msg", **payload)
+        action = "send_private_msg"
     else:
         payload["group_id"] = event.get_group_id()
-        await event.bot.api.call_action("send_group_msg", **payload)
-    return True
+        action = "send_group_msg"
+
+    for attempt in range(1, attempts + 1):
+        try:
+            await event.bot.api.call_action(action, **payload)
+            return True
+        except Exception as error:
+            if attempt < attempts and _is_unconfirmed(error):
+                logger.warning(f"卡片发送未被确认（{type(error).__name__}），{delay:.0f} 秒后重试一次")
+                await asyncio.sleep(delay)
+                continue
+            raise CardError(f"卡片发送失败: {type(error).__name__} {error}") from error
+    return False
