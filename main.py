@@ -181,7 +181,10 @@ class MusicPlugin(Star):
         if not cover:
             # 签名服务要求 cover 非空；网易云那条路没有封面，补取一次
             cover = await asyncio.to_thread(fetch_netease_cover, song.get("id"))
-        # 还没有就用内置默认封面兜底（首次上传后进程内缓存）
+        if str(self.config.get("card_cover_mode", "auto")) == "default":
+            # 排查用：一律用内置默认封面，用来区分「封面内容」与其它原因导致的卡片失败
+            cover = ""
+        # 下载 → 规范成 300×300 JPEG → 重新上传；下载失败也会回退内置默认封面
         cover = await asyncio.to_thread(prepare_cover, cover)
 
         audio_url = await asyncio.to_thread(upload_audio, result_path)

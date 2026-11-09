@@ -92,6 +92,16 @@
     "hint": "qq / bilibili 实测可签；163 目前服务端一律返回 500（重试 3 次仍失败），选中后会退化为发语音",
     "default": "qq"
   },
+  "card_cover_mode": {
+    "description": "卡片封面来源",
+    "type": "string",
+    "options": [
+      "auto",
+      "default"
+    ],
+    "hint": "auto：用歌曲封面（下载后规范成 300×300 JPEG 再上传）；default：一律用内置默认封面，排查「封面内容导致卡片失败」时切到这个",
+    "default": "auto"
+  },
   "vocal_vol": {
     "description": "人声音量（dB）",
     "type": "float",
