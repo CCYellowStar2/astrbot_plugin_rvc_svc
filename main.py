@@ -151,11 +151,15 @@ class MusicPlugin(Star):
                                  voice_name: str = ""):
         sent_as_card = False
         if self.config.get("music_card", True) and self._supports_music_card(event):
+            started = time.perf_counter()
             try:
                 await self._send_music_card(event, result_path, song or {}, voice_name)
                 sent_as_card = True
+                logger.info(f"音乐卡片发送成功，耗时 {time.perf_counter() - started:.1f}s")
             except Exception as error:
-                logger.warning(f"音乐卡片发送失败，回退为语音: {error}")
+                logger.warning(
+                    f"音乐卡片发送失败（耗时 {time.perf_counter() - started:.1f}s），回退为语音: {error}"
+                )
 
         # voice_also 打开时，卡片发成功也照样补一条语音
         send_voice = (not sent_as_card) or bool(self.config.get("voice_also", False))

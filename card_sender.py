@@ -87,7 +87,7 @@ def _verify_media(url: str, kind: str = "audio") -> tuple:
     """
     headers = {**_UA, "Accept-Encoding": "identity", "Range": "bytes=0-2047"}
     try:
-        response = requests.get(url, headers=headers, timeout=20, stream=True)
+        response = requests.get(url, headers=headers, timeout=8, stream=True)
         content_type = response.headers.get("Content-Type", "")
         head = next(response.iter_content(16), b"")
         response.close()
@@ -109,7 +109,7 @@ def _upload_uguu(path: str, mime: str = "audio/mpeg") -> str:
             "https://uguu.se/upload?output=text",
             files={"files[]": (os.path.basename(path), handle, mime)},
             headers=_UA,
-            timeout=90,
+            timeout=45,
         )
     if response.status_code != 200:
         raise CardError(f"uguu 上传失败: HTTP {response.status_code}")
@@ -125,7 +125,7 @@ def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
             "https://pomf2.lain.la/upload.php",
             files={"files[]": (os.path.basename(path), handle, mime)},
             headers=_UA,
-            timeout=90,
+            timeout=45,
         )
     if response.status_code != 200:
         raise CardError(f"pomf2 上传失败: HTTP {response.status_code}")
@@ -145,20 +145,31 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
     kind 必须是 "audio" 或 "image"（校验逻辑按它分支），日志里用中文标签显示。
     """
     label = {"audio": "音频", "image": "封面"}.get(kind, kind)
+    size_mb = os.path.getsize(path) / 1024 / 1024
     errors = []
     for name, uploader in _UPLOADERS:
-        for attempt in range(1, 3):
+        for attempt in (1, 2):
+            started = time.perf_counter()
             try:
                 url = uploader(path, mime)
             except Exception as error:
-                errors.append(f"{name}(第{attempt}次): {type(error).__name__} {error}")
+                elapsed = time.perf_counter() - started
+                errors.append(f"{name}(第{attempt}次, {elapsed:.1f}s): {type(error).__name__} {error}")
+                # 超时基本等于这个源不通：直接换下一个源，别在同一个源上再等一轮
+                if isinstance(error, requests.exceptions.Timeout) or elapsed > 30:
+                    logger.warning(f"{label} 上传到 {name} 太慢/超时（{elapsed:.1f}s），换下一个源")
+                    break
                 if attempt == 1:
                     time.sleep(1)
                 continue
+            elapsed = time.perf_counter() - started
+            speed = size_mb * 8 / elapsed if elapsed > 0 else 0.0
+            logger.info(
+                f"{label} 已上传到 {name}: {url} | 用时 {elapsed:.1f}s"
+                f"（{size_mb:.1f} MB，约 {speed:.1f} Mbps）"
+            )
             ok, detail = _verify_media(url, kind)
-            if ok:
-                logger.info(f"{label} 已上传到 {name}: {url}")
-            else:
+            if not ok:
                 logger.warning(f"{label} 直链预检没过（{detail}），仍交给签名服务判定: {url}")
             return url
     raise CardError(f"{label} 临时上传全部失败 -> " + " | ".join(errors))
@@ -236,15 +247,21 @@ def prepare_cover(cover_url: str = "") -> str:
         entry = _COVER_CACHE.get(cover_url)
         if entry and now - entry[1] < _COVER_TTL:
             return entry[0]
+        started = time.perf_counter()
         try:
-            url = _upload_cover_bytes(_normalize_cover_bytes(_download_cover(cover_url)))
+            raw = _download_cover(cover_url)
+            downloaded = time.perf_counter() - started
+            url = _upload_cover_bytes(_normalize_cover_bytes(raw))
             if len(_COVER_CACHE) >= _COVER_CACHE_LIMIT:
                 _COVER_CACHE.pop(next(iter(_COVER_CACHE)))
             _COVER_CACHE[cover_url] = (url, now)
-            logger.info(f"封面已规范化并上传: {cover_url[:70]}")
+            logger.info(
+                f"封面已规范化并上传: {cover_url[:60]} | 下载 {downloaded:.1f}s，"
+                f"总计 {time.perf_counter() - started:.1f}s"
+            )
             return url
         except Exception as error:
-            logger.warning(f"封面处理失败，改用默认封面: {error}")
+            logger.warning(f"封面处理失败（{time.perf_counter() - started:.1f}s），改用默认封面: {error}")
 
     if _DEFAULT_COVER_URL and now - _DEFAULT_COVER_AT < _COVER_TTL:
         return _DEFAULT_COVER_URL
