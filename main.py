@@ -309,6 +309,33 @@ class MusicPlugin(Star):
         self.config.save_config()
         logger.info(f"{api_type.upper()} 模型列表已更新并成功保存，共 {len(new_models_list)} 个模型")
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("卡片测试")
+    async def card_test(self, event: AstrMessageEvent):
+        """发一张「公共音频 + 默认封面」的卡片，用来区分卡片本身与翻唱链路的问题。"""
+        if not self._supports_music_card(event):
+            yield event.plain_result("当前平台不是 OneBot，发不了音乐卡片")
+            return
+        audio_url = "https://music.163.com/song/media/outer/url?id=1330348068.mp3"
+        try:
+            cover = await asyncio.to_thread(prepare_cover, "")
+            card = await asyncio.to_thread(
+                sign_ark,
+                self.config.get("ark_api") or DEFAULT_ARK_API,
+                self.config.get("ark_key", ""),
+                audio_url,
+                "卡片测试（公共音频）",
+                "测试",
+                cover,
+                audio_url,
+                self.config.get("music_card_format", "qq"),
+            )
+            await send_json_card(event, card)
+            yield event.plain_result("✅ 测试卡片已发送（网易云公共直链 + 默认封面）")
+        except Exception as error:
+            logger.error(traceback.format_exc())
+            yield event.plain_result(f"❌ 测试卡片失败: {error}")
+
     @filter.command("分离模型列表")
     async def list_separator_models(self, event: AstrMessageEvent):
         try:
