@@ -69,6 +69,12 @@
     "hint": "关（默认）：只发卡片，失败才发语音；开：卡片和语音都发，既能点开就听、又能留卡片",
     "default": false
   },
+  "upload_sources": {
+    "description": "临时存储上传源（按顺序尝试，逗号分隔）",
+    "type": "string",
+    "hint": "可用值：pomf2（永久保存，部分网络需代理）、uguu（保留 3 小时）。不同地区能通的源不一样，失败会自动换下一个并在 5 分钟内跳过",
+    "default": "pomf2,uguu"
+  },
   "ark_key": {
     "description": "音乐卡片签名服务的 key",
     "type": "string",

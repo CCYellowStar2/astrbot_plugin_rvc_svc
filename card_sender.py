@@ -109,7 +109,7 @@ def _upload_uguu(path: str, mime: str = "audio/mpeg") -> str:
             "https://uguu.se/upload?output=text",
             files={"files[]": (os.path.basename(path), handle, mime)},
             headers=_UA,
-            timeout=45,
+            timeout=20,
         )
     if response.status_code != 200:
         raise CardError(f"uguu 上传失败: HTTP {response.status_code}")
@@ -125,7 +125,7 @@ def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
             "https://pomf2.lain.la/upload.php",
             files={"files[]": (os.path.basename(path), handle, mime)},
             headers=_UA,
-            timeout=45,
+            timeout=20,
         )
     if response.status_code != 200:
         raise CardError(f"pomf2 上传失败: HTTP {response.status_code}")
@@ -136,12 +136,31 @@ def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
     return url
 
 
+_ALL_UPLOADERS = {"pomf2": _upload_pomf2, "uguu": _upload_uguu}
 _UPLOADERS = (("pomf2", _upload_pomf2), ("uguu", _upload_uguu))
 
 # 某个源刚失败过就冷却一段时间，别让每首歌都在它身上白试两轮。
 # 实测 uguu 会整段时间连着 502：4 次尝试全 502，每次白白多等 1 秒 + 两次请求。
 _SOURCE_COOLDOWN_SECONDS = 300
 _source_down_until: dict = {}
+
+
+def set_upload_sources(spec) -> None:
+    """按配置调整上传源顺序，例如 "pomf2,uguu"；未知名字忽略，空值恢复默认。"""
+    global _UPLOADERS
+    names = [n.strip().lower() for n in str(spec or "").replace("，", ",").split(",") if n.strip()]
+    picked = [(n, _ALL_UPLOADERS[n]) for n in names if n in _ALL_UPLOADERS]
+    if not picked:
+        picked = [("pomf2", _upload_pomf2), ("uguu", _upload_uguu)]
+    # 去重保序
+    seen = set()
+    ordered = []
+    for name, uploader in picked:
+        if name not in seen:
+            seen.add(name)
+            ordered.append((name, uploader))
+    _UPLOADERS = tuple(ordered)
+    logger.info(f"临时上传源顺序: {' → '.join(n for n, _ in _UPLOADERS)}")
 
 
 def _pick_uploaders():
@@ -157,7 +176,7 @@ def _looks_like_server_error(error: Exception) -> bool:
     """5xx / 连接类错误当作「这个源当前不可用」，立刻换源而不是原地重试。"""
     if isinstance(error, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
         return True
-    return re.search(r"HTTP 5\d\d", str(error)) is not None
+    return re.search(r"HTTP (5\d\d|403)", str(error)) is not None
 
 
 def _upload_with_retry(path: str, mime: str, kind: str) -> str:

@@ -22,6 +22,7 @@ from .card_sender import (
     MAX_TITLE_LEN,
     clean_card_text,
     prepare_cover,
+    set_upload_sources,
     fetch_netease_cover,
     send_json_card,
     sign_ark,
@@ -115,7 +116,13 @@ class MusicPlugin(Star):
         self.svc_models_keywords = config.get("svc_models_keywords", [])
         
         self.inference_timeout = config.get("inference_timeout", 300)
-        
+
+        # 临时上传源（不同地区能用的不一样，所以做成配置）
+        try:
+            set_upload_sources(config.get("upload_sources", ""))
+        except Exception:
+            logger.debug(traceback.format_exc())
+
         if self.default_api == "netease":
             from .api import NetEaseMusicAPI
             self.api = NetEaseMusicAPI()
