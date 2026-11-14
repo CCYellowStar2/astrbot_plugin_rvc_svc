@@ -82,7 +82,7 @@
 | `ark_api` | 音乐卡片签名服务地址 | 咸鱼 API 的 QQ 音乐卡片接口 |
 | `music_card_format` | 卡片签名格式（`qq` / `bilibili`） | `qq` |
 | `voice_also` | 卡片发成功时也补发一条语音 | `false` |
-| `upload_sources` | 临时存储上传源（逗号分隔，按顺序尝试） | `litterbox,uguu,pomf2` |
+| `upload_sources` | 临时存储上传源（列表，从上到下按顺序尝试） | `litterbox, uguu, pomf2` |
 | `vocal_vol` | 人声音量（dB，-3 ~ 3，与后端滑条一致） | `0` |
 | `inst_vol` | 伴奏音量（dB，-3 ~ 3，与后端滑条一致） | `0` |
 
@@ -214,6 +214,9 @@ A：说明卡片链路某一步失败了（默认会记 warning 日志）。常�
 - 后端整合包自带 Python 运行时，无需单独安装 Python
 
 ## 更新日志
+
+### V1.5.2
+- ✨ `upload_sources` 改为列表类型，WebUI 里直接拖动排序（仍兼容旧的逗号字符串写法）
 
 ### V1.5.1
 - ♻️ `bili_search` 也改用 aiohttp：视频元信息、封面下载都走异步，去掉 `to_thread`；拼图改为**封面并发下载**后在线程里渲染（16 条结果的出图明显更快）

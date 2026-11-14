@@ -228,9 +228,18 @@ _source_down_until: dict = {}
 
 
 def set_upload_sources(spec) -> None:
-    """按配置调整上传源顺序，例如 "pomf2,uguu"；未知名字忽略，空值恢复默认。"""
+    """按配置调整上传源顺序。
+
+    兼容两种写法：WebUI 的列表（["uguu", "litterbox"]），
+    以及早期的字符串（"uguu,litterbox"，支持中文逗号）。
+    未知名字忽略，空值恢复默认。
+    """
     global _UPLOADERS
-    names = [n.strip().lower() for n in str(spec or "").replace("，", ",").split(",") if n.strip()]
+    if isinstance(spec, (list, tuple, set)):
+        raw = [str(item) for item in spec]
+    else:
+        raw = str(spec or "").replace("，", ",").split(",")
+    names = [n.strip().lower() for n in raw if n.strip()]
     picked = [(n, _ALL_UPLOADERS[n]) for n in names if n in _ALL_UPLOADERS]
     if not picked:
         picked = list(_UPLOADERS_DEFAULT)
