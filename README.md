@@ -215,6 +215,9 @@ A：说明卡片链路某一步失败了（默认会记 warning 日志）。常�
 
 ## 更新日志
 
+### V1.5.1
+- ♻️ `bili_search` 也改用 aiohttp：视频元信息、封面下载都走异步，去掉 `to_thread`；拼图改为**封面并发下载**后在线程里渲染（16 条结果的出图明显更快）
+
 ### V1.5.0
 - ♻️ 卡片链路的网络层从 `requests`（同步 + `to_thread`）改为 **aiohttp 原生异步**：上传、封面下载、签名、网易云取封面全部 `await`，不再占用线程池
 - 🔧 litterbox 仍走系统 `curl`（它按 TLS 指纹拦 Python 客户端），改用 `asyncio.create_subprocess_exec`，不阻塞事件循环

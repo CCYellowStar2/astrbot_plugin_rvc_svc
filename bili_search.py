@@ -2,12 +2,13 @@
 
 import asyncio
 import html
+import json
 import os
 import re
 import tempfile
 from io import BytesIO
 
-import requests
+import aiohttp
 from astrbot.api import logger
 from PIL import Image, ImageDraw, ImageFont
 
@@ -78,14 +79,17 @@ def _to_video(data: dict) -> dict:
 
 async def fetch_video_meta(bvid: str) -> dict:
     """按 BV 号取视频信息（不需要签名）。"""
-    response = await _to_thread(
-        requests.get,
-        "https://api.bilibili.com/x/web-interface/view",
-        params={"bvid": bvid},
-        headers=_BILI_HEADERS,
-        timeout=20,
-    )
-    payload = response.json()
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+        async with session.get(
+            "https://api.bilibili.com/x/web-interface/view",
+            params={"bvid": bvid},
+            headers=_BILI_HEADERS,
+        ) as response:
+            text = await response.text()
+    try:
+        payload = json.loads(text)
+    except ValueError as error:
+        raise RuntimeError(f"B站返回非 JSON（多半是风控页面）: {text[:60]}") from error
     if payload.get("code") != 0:
         raise RuntimeError(f"B站返回 code={payload.get('code')} {str(payload.get('message'))[:40]}")
     return _to_video(payload.get("data") or {})
@@ -162,12 +166,6 @@ async def search_videos(keyword: str, limit: int = 16, attempts: int = 3) -> lis
     return videos
 
 
-def _to_thread(func, *args, **kwargs):
-    import asyncio
-
-    return asyncio.to_thread(func, *args, **kwargs)
-
-
 def _font(size: int):
     for path in _FONT_CANDIDATES:
         try:
@@ -177,14 +175,19 @@ def _font(size: int):
     return ImageFont.load_default()
 
 
-def _fetch_cover(url: str):
+async def _fetch_cover(url: str):
+    """取封面图（异步）。B 站图床有防盗链，必须带 Referer，否则可能拿到占位图。"""
     if not url:
         return None
     try:
-        response = requests.get(url, timeout=15, headers=_BILI_HEADERS)
-        if response.status_code != 200 or not response.content:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.get(url, headers=_BILI_HEADERS) as response:
+                if response.status != 200:
+                    return None
+                data = await response.read()
+        if not data:
             return None
-        return Image.open(BytesIO(response.content)).convert("RGB")
+        return Image.open(BytesIO(data)).convert("RGB")
     except Exception:
         return None
 
@@ -216,11 +219,19 @@ def _wrap(draw, text: str, font, max_width: int, max_lines: int = 2) -> list:
     return lines
 
 
-def build_board(videos: list) -> str:
-    """把搜索结果拼成一张两栏长图，返回临时文件路径。"""
+async def build_board(videos: list) -> str:
+    """把搜索结果拼成一张两栏长图，返回临时文件路径。
+
+    封面并发下载（16 张串行会明显拖慢），拼图本身是纯 CPU/内存操作，
+    丢到线程里做，避免阻塞事件循环。
+    """
     if not videos:
         raise ValueError("没有可绘制的结果")
+    covers = await asyncio.gather(*(_fetch_cover(video.get("pic", "")) for video in videos))
+    return await asyncio.to_thread(_render_board, videos, covers)
 
+
+def _render_board(videos: list, covers: list) -> str:
     title_font = _font(17)
     meta_font = _font(13)
     col_width = (BOARD_WIDTH - PADDING * 2 - COL_GAP * (COLUMNS - 1)) // COLUMNS
@@ -242,7 +253,7 @@ def build_board(videos: list) -> str:
         left = PADDING + column * (col_width + COL_GAP)
         top = PADDING + row * ROW_HEIGHT
 
-        cover = _fetch_cover(video.get("pic", ""))
+        cover = covers[index - 1] if index - 1 < len(covers) else None
         if cover is not None:
             ratio = max(COVER_W / cover.width, COVER_H / cover.height)
             resized = cover.resize(

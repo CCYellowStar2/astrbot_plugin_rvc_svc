@@ -510,7 +510,7 @@ class MusicPlugin(Star):
                     return
                 board = None
                 try:
-                    board = await asyncio.to_thread(build_bili_board, songs)
+                    board = await build_bili_board(songs)
                 except Exception as error:
                     logger.error(traceback.format_exc())
                 if board:
