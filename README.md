@@ -215,6 +215,10 @@ A：说明卡片链路某一步失败了（默认会记 warning 日志）。常�
 
 ## 更新日志
 
+### V1.5.0
+- ♻️ 卡片链路的网络层从 `requests`（同步 + `to_thread`）改为 **aiohttp 原生异步**：上传、封面下载、签名、网易云取封面全部 `await`，不再占用线程池
+- 🔧 litterbox 仍走系统 `curl`（它按 TLS 指纹拦 Python 客户端），改用 `asyncio.create_subprocess_exec`，不阻塞事件循环
+
 ### V1.4.8
 - ✨ 新增 **litterbox** 上传源并设为默认第一（保留 72 小时、上限 1 GiB，直连网络可通）。它拦 Python 客户端指纹，所以走系统 `curl` 实现
 - 🔧 默认上传顺序：`litterbox,uguu,pomf2`

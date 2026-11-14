@@ -196,22 +196,21 @@ class MusicPlugin(Star):
         cover = song.get("pic") or ""
         if not cover:
             # 签名服务要求 cover 非空；网易云那条路没有封面，补取一次
-            cover = await asyncio.to_thread(fetch_netease_cover, song.get("id"))
+            cover = await fetch_netease_cover(song.get("id"))
         if str(self.config.get("card_cover_mode", "auto")) == "default":
             # 排查用：一律用内置默认封面，用来区分「封面内容」与其它原因导致的卡片失败
             cover = ""
         # 下载 → 规范成 300×300 JPEG → 重新上传；下载失败也会回退内置默认封面
-        cover = await asyncio.to_thread(prepare_cover, cover)
+        cover = await prepare_cover(cover)
 
-        audio_url = await asyncio.to_thread(upload_audio, result_path)
+        audio_url = await upload_audio(result_path)
         card_title = clean_card_text(f"{title}（AI 翻唱）", MAX_TITLE_LEN)
         if original_artist and original_artist != singer:
             card_title = clean_card_text(
                 f"{title}（AI 翻唱 - 原唱 {original_artist}）", MAX_TITLE_LEN
             )
         logger.info(f"卡片文案: 标题={card_title!r}({len(card_title)}) 歌手={singer!r}({len(singer)})")
-        card = await asyncio.to_thread(
-            sign_ark,
+        card = await sign_ark(
             self.config.get("ark_api") or DEFAULT_ARK_API,
             self.config.get("ark_key", ""),
             audio_url,

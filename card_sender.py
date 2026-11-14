@@ -6,6 +6,9 @@
 
 签名服务要求 `cover` 非空（空值会回「缺少必要参数: …」，极具误导性），
 所以缺封面时这里会兜底上传一张内置默认封面。
+
+网络层统一用 aiohttp（原生异步，不需要 asyncio.to_thread）：
+- 只有 litterbox 例外——它按 TLS 指纹拦 Python 客户端，只能用系统 curl 子进程
 """
 
 import asyncio
@@ -13,11 +16,10 @@ import io
 import json
 import os
 import re
-import subprocess
 import tempfile
 import time
 
-import requests
+import aiohttp
 from astrbot.api import logger
 from PIL import Image
 
@@ -77,9 +79,20 @@ class CardError(Exception):
     """卡片链路任意一步失败，调用方据此回退为语音消息。"""
 
 
+def _session(total: float) -> aiohttp.ClientSession:
+    """每次请求建一个短会话：并发低，省得处理长连接的生命周期。
+
+    trust_env=True 让 aiohttp 和以前的 requests 一样尊重 HTTP(S)_PROXY 环境变量。
+    """
+    return aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=total),
+        trust_env=True,
+    )
+
+
 # ---------------- 上传 + 校验 ----------------
 
-def _verify_media(url: str, kind: str = "audio") -> tuple:
+async def _verify_media(url: str, kind: str = "audio") -> tuple:
     """探一下直链返回的是不是原始媒体字节，返回 (是否通过, 说明)。
 
     只取前 2KB（Range），避免为了校验把整个文件拖下来；
@@ -88,42 +101,50 @@ def _verify_media(url: str, kind: str = "audio") -> tuple:
     """
     headers = {**_UA, "Accept-Encoding": "identity", "Range": "bytes=0-2047"}
     try:
-        response = requests.get(url, headers=headers, timeout=8, stream=True)
-        content_type = response.headers.get("Content-Type", "")
-        head = next(response.iter_content(16), b"")
-        response.close()
-        detail = f"HTTP {response.status_code} {content_type or '(无类型)'} 首字节={head[:12]!r}"
-        if response.status_code not in (200, 206):
-            return False, detail
-        if kind == "audio":
-            ok = "audio" in content_type or head.startswith(b"ID3") or head[:2] in (b"\xff\xfb", b"\xff\xf3")
-        else:
-            ok = "image" in content_type or head.startswith(b"\xff\xd8") or head.startswith(b"\x89PNG")
-        return ok, detail
+        async with _session(8) as session:
+            async with session.get(url, headers=headers) as response:
+                content_type = response.headers.get("Content-Type", "")
+                head = await response.content.read(16)
+                detail = f"HTTP {response.status} {content_type or '(无类型)'} 首字节={head[:12]!r}"
+                if response.status not in (200, 206):
+                    return False, detail
+                if kind == "audio":
+                    ok = (
+                        "audio" in content_type
+                        or head.startswith(b"ID3")
+                        or head[:2] in (b"\xff\xfb", b"\xff\xf3")
+                    )
+                else:
+                    ok = "image" in content_type or head.startswith(b"\xff\xd8") or head.startswith(b"\x89PNG")
+                return ok, detail
     except Exception as error:
         return False, f"{type(error).__name__}: {error}"
 
 
-def _upload_uguu(path: str, mime: str = "audio/mpeg") -> str:
-    with open(path, "rb") as handle:
-        response = requests.post(
-            "https://uguu.se/upload?output=text",
-            files={"files[]": (os.path.basename(path), handle, mime)},
-            headers=_UA,
-            timeout=20,
-        )
-    if response.status_code != 200:
-        raise CardError(f"uguu 上传失败: HTTP {response.status_code}")
-    url = response.text.strip().splitlines()[-1].strip()
+async def _upload_uguu(path: str, mime: str = "audio/mpeg") -> str:
+    form = aiohttp.FormData()
+    form.add_field(
+        "files[]",
+        open(path, "rb"),
+        filename=os.path.basename(path),
+        content_type=mime,
+    )
+    async with _session(20) as session:
+        async with session.post("https://uguu.se/upload?output=text", data=form, headers=_UA) as response:
+            text = await response.text()
+            status = response.status
+    if status != 200:
+        raise CardError(f"uguu 上传失败: HTTP {status}")
+    url = text.strip().splitlines()[-1].strip() if text.strip() else ""
     if not url.startswith("http"):
-        raise CardError(f"uguu 没有返回链接: {response.text[:120]}")
+        raise CardError(f"uguu 没有返回链接: {text[:120]}")
     return url
 
 
-def _upload_litterbox(path: str, mime: str = "audio/mpeg", hours: str = "72h") -> str:
+async def _upload_litterbox(path: str, mime: str = "audio/mpeg", hours: str = "72h") -> str:
     """catbox 的临时版：上限 1 GiB、最长保留 72 小时，直连（不走代理）时国内可通。
 
-    只能用系统 curl：requests 的客户端指纹会被它的 WAF 拦掉（实测 412 / 403），
+    只能用系统 curl：Python 客户端的 TLS 指纹会被它的 WAF 拦掉（实测 412 / 403），
     而同一个 IP 下 curl 能正常拿到直链。
     """
     command = [
@@ -142,14 +163,21 @@ def _upload_litterbox(path: str, mime: str = "audio/mpeg", hours: str = "72h") -
         "https://litterbox.catbox.moe/resources/internals/api.php",
     ]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=90)
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
     except FileNotFoundError as error:
         raise CardError("litterbox 需要系统 curl，当前环境没有") from error
-    except subprocess.TimeoutExpired as error:
+
+    try:
+        stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=90)
+    except asyncio.TimeoutError as error:
+        process.kill()
         raise CardError("litterbox 上传超时（90s）") from error
 
-    stdout = result.stdout or ""
-    body, _, tail = stdout.rpartition("HTTPCODE:")
+    body, _, tail = (stdout or b"").decode("utf-8", "replace").rpartition("HTTPCODE:")
     body = body.strip()
     status = tail.strip().replace("\n", " ") or "0"
 
@@ -159,20 +187,28 @@ def _upload_litterbox(path: str, mime: str = "audio/mpeg", hours: str = "72h") -
     raise CardError(f"litterbox 上传失败: HTTP {status} {body[:100]}".strip())
 
 
-def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
-    with open(path, "rb") as handle:
-        response = requests.post(
-            "https://pomf2.lain.la/upload.php",
-            files={"files[]": (os.path.basename(path), handle, mime)},
-            headers=_UA,
-            timeout=20,
-        )
-    if response.status_code != 200:
-        raise CardError(f"pomf2 上传失败: HTTP {response.status_code}")
-    files = (response.json() or {}).get("files") or []
+async def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
+    form = aiohttp.FormData()
+    form.add_field(
+        "files[]",
+        open(path, "rb"),
+        filename=os.path.basename(path),
+        content_type=mime,
+    )
+    async with _session(20) as session:
+        async with session.post("https://pomf2.lain.la/upload.php", data=form, headers=_UA) as response:
+            status = response.status
+            text = await response.text()
+    if status != 200:
+        raise CardError(f"pomf2 上传失败: HTTP {status}")
+    try:
+        payload = json.loads(text)
+    except ValueError as error:
+        raise CardError(f"pomf2 返回非 JSON: {text[:100]}") from error
+    files = (payload or {}).get("files") or []
     url = str((files[0] or {}).get("url", "")) if files else ""
     if not url.startswith("http"):
-        raise CardError(f"pomf2 没有返回链接: {response.text[:120]}")
+        raise CardError(f"pomf2 没有返回链接: {text[:120]}")
     return url
 
 
@@ -219,14 +255,14 @@ def _pick_uploaders():
 
 
 def _looks_like_server_error(error: Exception) -> bool:
-    """5xx / 连接类错误当作「这个源当前不可用」，立刻换源而不是原地重试。"""
-    if isinstance(error, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+    """5xx / 403 / 连接类错误当作「这个源当前不可用」，立刻换源而不是原地重试。"""
+    if isinstance(error, (aiohttp.ClientError, asyncio.TimeoutError)):
         return True
     return re.search(r"HTTP (5\d\d|403)", str(error)) is not None
 
 
-def _upload_with_retry(path: str, mime: str, kind: str) -> str:
-    """两个源 × 各试两次；上传成功即返回，直链预检只作提示（真正的判据是签名服务）。
+async def _upload_with_retry(path: str, mime: str, kind: str) -> str:
+    """按顺序试各上传源（每源最多两次）；上传成功即返回，直链预检只作提示。
 
     kind 必须是 "audio" 或 "image"（校验逻辑按它分支），日志里用中文标签显示。
     """
@@ -238,7 +274,7 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
         for attempt in (1, 2):
             started = time.perf_counter()
             try:
-                url = uploader(path, mime)
+                url = await uploader(path, mime)
             except Exception as error:
                 elapsed = time.perf_counter() - started
                 errors.append(f"{name}(第{attempt}次, {elapsed:.1f}s): {type(error).__name__} {error}")
@@ -248,7 +284,7 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
                     f"{label} 上传到 {name} 第{attempt}次失败（{elapsed:.1f}s）："
                     f"{type(error).__name__} {error}"
                 )
-                # 超时 / 5xx / 连不上：这个源当前不可用，记冷却时间并立即换源
+                # 超时 / 5xx / 403 / 连不上：这个源当前不可用，记冷却时间并立即换源
                 if _looks_like_server_error(error) or elapsed > 30:
                     _source_down_until[name] = time.time() + _SOURCE_COOLDOWN_SECONDS
                     logger.warning(
@@ -257,7 +293,7 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
                     )
                     break
                 if attempt == 1:
-                    time.sleep(1)
+                    await asyncio.sleep(1)
                 continue
             elapsed = time.perf_counter() - started
             speed = size_mb * 8 / elapsed if elapsed > 0 else 0.0
@@ -267,18 +303,18 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
                 f"{label} 已上传到 {name}: {url} | 本次 {elapsed:.1f}s"
                 f"（{size_mb:.1f} MB，约 {speed:.1f} Mbps），含前面失败尝试共 {total:.1f}s"
             )
-            ok, detail = _verify_media(url, kind)
+            ok, detail = await _verify_media(url, kind)
             if not ok:
                 logger.warning(f"{label} 直链预检没过（{detail}），仍交给签名服务判定: {url}")
             return url
     raise CardError(f"{label} 临时上传全部失败 -> " + " | ".join(errors))
 
 
-def upload_audio(path: str) -> str:
+async def upload_audio(path: str) -> str:
     """上传音频，返回可被 QQ 解析的直链。"""
     if not os.path.isfile(path):
         raise CardError(f"文件不存在: {path}")
-    return _upload_with_retry(path, "audio/mpeg", "audio")
+    return await _upload_with_retry(path, "audio/mpeg", "audio")
 
 
 _COVER_TTL = 2 * 3600  # uguu 3 小时删文件，这里提前 1 小时失效重传
@@ -303,28 +339,30 @@ def _normalize_cover_bytes(raw: bytes) -> bytes:
         return buffer.getvalue()
 
 
-def _download_cover(url: str, attempts: int = 2) -> bytes:
+async def _download_cover(url: str, attempts: int = 2) -> bytes:
     last = None
     for attempt in range(1, attempts + 1):
         try:
-            response = requests.get(url, headers=_COVER_HEADERS, timeout=20)
-            if response.status_code == 200 and response.content:
-                return response.content
-            last = f"HTTP {response.status_code}（{len(response.content)} 字节）"
+            async with _session(20) as session:
+                async with session.get(url, headers=_COVER_HEADERS) as response:
+                    data = await response.read()
+                    if response.status == 200 and data:
+                        return data
+                    last = f"HTTP {response.status}（{len(data)} 字节）"
         except Exception as error:
             last = f"{type(error).__name__} {error}"
         if attempt < attempts:
-            time.sleep(1)
+            await asyncio.sleep(1)
     raise CardError(f"封面下载失败: {last}")
 
 
-def _upload_cover_bytes(data: bytes) -> str:
+async def _upload_cover_bytes(data: bytes) -> str:
     handle, path = tempfile.mkstemp(suffix=".jpg", prefix="cover_")
     os.close(handle)
     try:
         with open(path, "wb") as f:
             f.write(data)
-        return _upload_with_retry(path, "image/jpeg", "image")
+        return await _upload_with_retry(path, "image/jpeg", "image")
     finally:
         if os.path.isfile(path):
             try:
@@ -333,7 +371,7 @@ def _upload_cover_bytes(data: bytes) -> str:
                 pass
 
 
-def prepare_cover(cover_url: str = "") -> str:
+async def prepare_cover(cover_url: str = "") -> str:
     """把封面规范成 300×300 JPEG 后重新上传，返回签名服务能直接用的直链。
 
     走这一步而不是把原 URL 直接丢给签名服务，是因为封面失败的根因多在「内容」：
@@ -348,9 +386,9 @@ def prepare_cover(cover_url: str = "") -> str:
             return entry[0]
         started = time.perf_counter()
         try:
-            raw = _download_cover(cover_url)
+            raw = await _download_cover(cover_url)
             downloaded = time.perf_counter() - started
-            url = _upload_cover_bytes(_normalize_cover_bytes(raw))
+            url = await _upload_cover_bytes(_normalize_cover_bytes(raw))
             if len(_COVER_CACHE) >= _COVER_CACHE_LIMIT:
                 _COVER_CACHE.pop(next(iter(_COVER_CACHE)))
             _COVER_CACHE[cover_url] = (url, now)
@@ -368,7 +406,7 @@ def prepare_cover(cover_url: str = "") -> str:
         raise CardError(f"内置默认封面不存在: {_DEFAULT_COVER_PATH}")
     with open(_DEFAULT_COVER_PATH, "rb") as handle:
         data = _normalize_cover_bytes(handle.read())
-    _DEFAULT_COVER_URL = _upload_cover_bytes(data)
+    _DEFAULT_COVER_URL = await _upload_cover_bytes(data)
     _DEFAULT_COVER_AT = now
     logger.info(f"已启用内置默认封面: {_DEFAULT_COVER_URL}")
     return _DEFAULT_COVER_URL
@@ -376,14 +414,17 @@ def prepare_cover(cover_url: str = "") -> str:
 
 # ---------------- 签名 ----------------
 
-def _sign_once(ark_api: str, params: dict) -> dict:
-    response = requests.get(ark_api or DEFAULT_ARK_API, params=params, headers=_UA, timeout=40)
-    if response.status_code != 200:
-        raise CardError(f"签名服务 HTTP {response.status_code}")
+async def _sign_once(ark_api: str, params: dict) -> dict:
+    async with _session(40) as session:
+        async with session.get(ark_api or DEFAULT_ARK_API, params=params, headers=_UA) as response:
+            status = response.status
+            text = await response.text()
+    if status != 200:
+        raise CardError(f"签名服务 HTTP {status}")
     try:
-        payload = response.json()
+        payload = json.loads(text)
     except ValueError as error:
-        raise CardError(f"签名服务返回非 JSON（多半是网关错误页）: {response.text[:80]}") from error
+        raise CardError(f"签名服务返回非 JSON（多半是网关错误页）: {text[:80]}") from error
     if payload.get("code") != 200:
         raise CardError(f"签名失败: {payload.get('code')} {payload.get('msg')}")
     data = payload.get("data") or {}
@@ -392,9 +433,9 @@ def _sign_once(ark_api: str, params: dict) -> dict:
     return data
 
 
-def sign_ark(ark_api: str, ark_key: str, audio_url: str, title: str, singer: str,
-             cover: str = "", jump: str = "", card_format: str = "qq",
-             attempts: int = 3) -> dict:
+async def sign_ark(ark_api: str, ark_key: str, audio_url: str, title: str, singer: str,
+                   cover: str = "", jump: str = "", card_format: str = "qq",
+                   attempts: int = 3) -> dict:
     """调签名服务换取可渲染的卡片结构化数据（默认最多试 3 次 = 首试 + 重试 2 次）。
 
     只重试网络抖动、网关 5xx、偶发 code=500；参数错误（400 / format 不支持）立即失败。
@@ -415,7 +456,7 @@ def sign_ark(ark_api: str, ark_key: str, audio_url: str, title: str, singer: str
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
-            return _sign_once(ark_api, params)
+            return await _sign_once(ark_api, params)
         except Exception as error:
             last_error = error
             message = str(error)
@@ -423,11 +464,11 @@ def sign_ark(ark_api: str, ark_key: str, audio_url: str, title: str, singer: str
                 raise CardError(f"{message}（format={params['format']}）") from error
             logger.warning(f"签名第 {attempt} 次失败: {message}")
             if attempt < attempts:
-                time.sleep(attempt)
+                await asyncio.sleep(attempt)
     raise CardError(f"签名重试 {attempts} 次仍失败: {last_error}")
 
 
-def fetch_netease_cover(song_id) -> str:
+async def fetch_netease_cover(song_id) -> str:
     """网易云那条路没有封面，这里补一个。
 
     网易云原始 picUrl 是 http，而且动辄好几 MB（实测 7.1 MB）；
@@ -437,13 +478,14 @@ def fetch_netease_cover(song_id) -> str:
     if not text.isdigit():
         return ""
     try:
-        response = requests.get(
-            "http://music.163.com/api/song/detail",
-            params={"ids": f"[{text}]"},
-            headers={**_UA, "Referer": "http://music.163.com"},
-            timeout=15,
-        )
-        songs = (response.json() or {}).get("songs") or []
+        async with _session(15) as session:
+            async with session.get(
+                "http://music.163.com/api/song/detail",
+                params={"ids": f"[{text}]"},
+                headers={**_UA, "Referer": "http://music.163.com"},
+            ) as response:
+                body = await response.text()
+        songs = (json.loads(body) or {}).get("songs") or []
         if not songs:
             return ""
         pic = str(((songs[0] or {}).get("album") or {}).get("picUrl") or "")
