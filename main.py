@@ -117,9 +117,18 @@ class MusicPlugin(Star):
         
         self.inference_timeout = config.get("inference_timeout", 300)
 
-        # 临时上传源（不同地区能用的不一样，所以做成配置）
+        # 临时上传源（不同地区能用的不一样）：三个优先级各一个下拉框，
+        # 老版本用的 upload_sources（列表/逗号字符串）仍然兼容。
         try:
-            set_upload_sources(config.get("upload_sources", ""))
+            legacy = config.get("upload_sources")
+            if legacy:
+                set_upload_sources(legacy)
+            else:
+                picked = [
+                    config.get(f"upload_source_{index}", "")
+                    for index in (1, 2, 3)
+                ]
+                set_upload_sources([item for item in picked if item and item != "不使用"])
         except Exception:
             logger.debug(traceback.format_exc())
 

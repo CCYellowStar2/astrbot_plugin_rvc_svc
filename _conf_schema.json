@@ -69,15 +69,41 @@
     "hint": "关（默认）：只发卡片，失败才发语音；开：卡片和语音都发，既能点开就听、又能留卡片",
     "default": false
   },
-  "upload_sources": {
-    "description": "临时存储上传源（从上到下按顺序尝试，可拖动排序）",
-    "type": "list",
-    "hint": "可用值：litterbox（保留 72 小时，直连可用、需要系统 curl）、uguu（保留 3 小时）、pomf2（永久保存，国内部分网络要走代理）。失败会自动换下一个并在 5 分钟内跳过",
-    "default": [
+  "upload_source_1": {
+    "description": "上传源（第 1 优先）",
+    "type": "string",
+    "options": [
       "litterbox",
       "uguu",
-      "pomf2"
-    ]
+      "pomf2",
+      "不使用"
+    ],
+    "hint": "litterbox：保留 72 小时、直连可用（需要系统 curl）；uguu：保留 3 小时；pomf2：永久保存、国内部分网络需要代理",
+    "default": "litterbox"
+  },
+  "upload_source_2": {
+    "description": "上传源（第 2 优先）",
+    "type": "string",
+    "options": [
+      "litterbox",
+      "uguu",
+      "pomf2",
+      "不使用"
+    ],
+    "hint": "第 1 个源失败时用它；选「不使用」表示不设备用",
+    "default": "uguu"
+  },
+  "upload_source_3": {
+    "description": "上传源（第 3 优先，可选）",
+    "type": "string",
+    "options": [
+      "litterbox",
+      "uguu",
+      "pomf2",
+      "不使用"
+    ],
+    "hint": "两个都失败时用；选「不使用」表示只用前两个",
+    "default": "pomf2"
   },
   "ark_key": {
     "description": "音乐卡片签名服务的 key",
