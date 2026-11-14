@@ -138,6 +138,27 @@ def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
 
 _UPLOADERS = (("uguu", _upload_uguu), ("pomf2", _upload_pomf2))
 
+# 某个源刚失败过就冷却一段时间，别让每首歌都在它身上白试两轮。
+# 实测 uguu 会整段时间连着 502：4 次尝试全 502，每次白白多等 1 秒 + 两次请求。
+_SOURCE_COOLDOWN_SECONDS = 300
+_source_down_until: dict = {}
+
+
+def _pick_uploaders():
+    """可用源优先，冷却中的源排到最后（全都冷却时照旧按原顺序试）。"""
+    now = time.time()
+    alive, down = [], []
+    for name, uploader in _UPLOADERS:
+        (down if _source_down_until.get(name, 0) > now else alive).append((name, uploader))
+    return alive + down
+
+
+def _looks_like_server_error(error: Exception) -> bool:
+    """5xx / 连接类错误当作「这个源当前不可用」，立刻换源而不是原地重试。"""
+    if isinstance(error, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+        return True
+    return re.search(r"HTTP 5\d\d", str(error)) is not None
+
 
 def _upload_with_retry(path: str, mime: str, kind: str) -> str:
     """两个源 × 各试两次；上传成功即返回，直链预检只作提示（真正的判据是签名服务）。
@@ -148,7 +169,7 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
     size_mb = os.path.getsize(path) / 1024 / 1024
     began = time.perf_counter()
     errors = []
-    for name, uploader in _UPLOADERS:
+    for name, uploader in _pick_uploaders():
         for attempt in (1, 2):
             started = time.perf_counter()
             try:
@@ -162,9 +183,13 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
                     f"{label} 上传到 {name} 第{attempt}次失败（{elapsed:.1f}s）："
                     f"{type(error).__name__} {error}"
                 )
-                # 超时基本等于这个源不通：直接换下一个源，别在同一个源上再等一轮
-                if isinstance(error, requests.exceptions.Timeout) or elapsed > 30:
-                    logger.warning(f"{label} 上传到 {name} 太慢/超时（{elapsed:.1f}s），换下一个源")
+                # 超时 / 5xx / 连不上：这个源当前不可用，记冷却时间并立即换源
+                if _looks_like_server_error(error) or elapsed > 30:
+                    _source_down_until[name] = time.time() + _SOURCE_COOLDOWN_SECONDS
+                    logger.warning(
+                        f"{name} 标记为暂时不可用（{_SOURCE_COOLDOWN_SECONDS // 60} 分钟内不再优先尝试），"
+                        f"本次换下一个源"
+                    )
                     break
                 if attempt == 1:
                     time.sleep(1)
@@ -172,6 +197,7 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
             elapsed = time.perf_counter() - started
             speed = size_mb * 8 / elapsed if elapsed > 0 else 0.0
             total = time.perf_counter() - began
+            _source_down_until.pop(name, None)
             logger.info(
                 f"{label} 已上传到 {name}: {url} | 本次 {elapsed:.1f}s"
                 f"（{size_mb:.1f} MB，约 {speed:.1f} Mbps），含前面失败尝试共 {total:.1f}s"
