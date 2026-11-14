@@ -136,7 +136,7 @@ def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
     return url
 
 
-_UPLOADERS = (("uguu", _upload_uguu), ("pomf2", _upload_pomf2))
+_UPLOADERS = (("pomf2", _upload_pomf2), ("uguu", _upload_uguu))
 
 # 某个源刚失败过就冷却一段时间，别让每首歌都在它身上白试两轮。
 # 实测 uguu 会整段时间连着 502：4 次尝试全 502，每次白白多等 1 秒 + 两次请求。
