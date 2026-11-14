@@ -146,6 +146,7 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
     """
     label = {"audio": "音频", "image": "封面"}.get(kind, kind)
     size_mb = os.path.getsize(path) / 1024 / 1024
+    began = time.perf_counter()
     errors = []
     for name, uploader in _UPLOADERS:
         for attempt in (1, 2):
@@ -155,6 +156,12 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
             except Exception as error:
                 elapsed = time.perf_counter() - started
                 errors.append(f"{name}(第{attempt}次, {elapsed:.1f}s): {type(error).__name__} {error}")
+                # 每次失败都记一笔：以前非超时的失败（如 HTTP 502）完全不留痕迹，
+                # 用户只觉得“慢”，却看不出时间花在哪一跳
+                logger.warning(
+                    f"{label} 上传到 {name} 第{attempt}次失败（{elapsed:.1f}s）："
+                    f"{type(error).__name__} {error}"
+                )
                 # 超时基本等于这个源不通：直接换下一个源，别在同一个源上再等一轮
                 if isinstance(error, requests.exceptions.Timeout) or elapsed > 30:
                     logger.warning(f"{label} 上传到 {name} 太慢/超时（{elapsed:.1f}s），换下一个源")
@@ -164,9 +171,10 @@ def _upload_with_retry(path: str, mime: str, kind: str) -> str:
                 continue
             elapsed = time.perf_counter() - started
             speed = size_mb * 8 / elapsed if elapsed > 0 else 0.0
+            total = time.perf_counter() - began
             logger.info(
-                f"{label} 已上传到 {name}: {url} | 用时 {elapsed:.1f}s"
-                f"（{size_mb:.1f} MB，约 {speed:.1f} Mbps）"
+                f"{label} 已上传到 {name}: {url} | 本次 {elapsed:.1f}s"
+                f"（{size_mb:.1f} MB，约 {speed:.1f} Mbps），含前面失败尝试共 {total:.1f}s"
             )
             ok, detail = _verify_media(url, kind)
             if not ok:
