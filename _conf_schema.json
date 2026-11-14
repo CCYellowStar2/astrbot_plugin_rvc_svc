@@ -72,8 +72,8 @@
   "upload_sources": {
     "description": "临时存储上传源（按顺序尝试，逗号分隔）",
     "type": "string",
-    "hint": "可用值：pomf2（永久保存，部分网络需代理）、uguu（保留 3 小时）。不同地区能通的源不一样，失败会自动换下一个并在 5 分钟内跳过",
-    "default": "pomf2,uguu"
+    "hint": "可用值：litterbox（保留 72 小时，直连可用、需要系统 curl）、uguu（保留 3 小时）、pomf2（永久保存，国内部分网络要走代理）。失败会自动换下一个并在 5 分钟内跳过",
+    "default": "litterbox,uguu,pomf2"
   },
   "ark_key": {
     "description": "音乐卡片签名服务的 key",

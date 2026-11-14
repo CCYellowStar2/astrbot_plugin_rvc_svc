@@ -13,6 +13,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import tempfile
 import time
 
@@ -119,6 +120,45 @@ def _upload_uguu(path: str, mime: str = "audio/mpeg") -> str:
     return url
 
 
+def _upload_litterbox(path: str, mime: str = "audio/mpeg", hours: str = "72h") -> str:
+    """catbox 的临时版：上限 1 GiB、最长保留 72 小时，直连（不走代理）时国内可通。
+
+    只能用系统 curl：requests 的客户端指纹会被它的 WAF 拦掉（实测 412 / 403），
+    而同一个 IP 下 curl 能正常拿到直链。
+    """
+    command = [
+        "curl",
+        "-s",
+        "-m",
+        "60",
+        "-w",
+        "\nHTTPCODE:%{http_code}",
+        "-F",
+        "reqtype=fileupload",
+        "-F",
+        f"time={hours}",
+        "-F",
+        f"fileToUpload=@{path};type={mime}",
+        "https://litterbox.catbox.moe/resources/internals/api.php",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=90)
+    except FileNotFoundError as error:
+        raise CardError("litterbox 需要系统 curl，当前环境没有") from error
+    except subprocess.TimeoutExpired as error:
+        raise CardError("litterbox 上传超时（90s）") from error
+
+    stdout = result.stdout or ""
+    body, _, tail = stdout.rpartition("HTTPCODE:")
+    body = body.strip()
+    status = tail.strip().replace("\n", " ") or "0"
+
+    if status == "200" and body.startswith("http"):
+        return body
+    # 把状态码写进错误信息，冷却逻辑（_looks_like_server_error）才能识别 403/5xx
+    raise CardError(f"litterbox 上传失败: HTTP {status} {body[:100]}".strip())
+
+
 def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
     with open(path, "rb") as handle:
         response = requests.post(
@@ -136,8 +176,14 @@ def _upload_pomf2(path: str, mime: str = "audio/mpeg") -> str:
     return url
 
 
-_ALL_UPLOADERS = {"pomf2": _upload_pomf2, "uguu": _upload_uguu}
-_UPLOADERS = (("pomf2", _upload_pomf2), ("uguu", _upload_uguu))
+_ALL_UPLOADERS = {"litterbox": _upload_litterbox, "pomf2": _upload_pomf2, "uguu": _upload_uguu}
+# 默认顺序：litterbox（直连可通、保留 72h）→ uguu（3h）→ pomf2（永久，但国内常需代理）
+_UPLOADERS_DEFAULT = (
+    ("litterbox", _upload_litterbox),
+    ("uguu", _upload_uguu),
+    ("pomf2", _upload_pomf2),
+)
+_UPLOADERS = _UPLOADERS_DEFAULT
 
 # 某个源刚失败过就冷却一段时间，别让每首歌都在它身上白试两轮。
 # 实测 uguu 会整段时间连着 502：4 次尝试全 502，每次白白多等 1 秒 + 两次请求。
@@ -151,7 +197,7 @@ def set_upload_sources(spec) -> None:
     names = [n.strip().lower() for n in str(spec or "").replace("，", ",").split(",") if n.strip()]
     picked = [(n, _ALL_UPLOADERS[n]) for n in names if n in _ALL_UPLOADERS]
     if not picked:
-        picked = [("pomf2", _upload_pomf2), ("uguu", _upload_uguu)]
+        picked = list(_UPLOADERS_DEFAULT)
     # 去重保序
     seen = set()
     ordered = []

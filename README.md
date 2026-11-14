@@ -82,7 +82,7 @@
 | `ark_api` | 音乐卡片签名服务地址 | 咸鱼 API 的 QQ 音乐卡片接口 |
 | `music_card_format` | 卡片签名格式（`qq` / `bilibili`） | `qq` |
 | `voice_also` | 卡片发成功时也补发一条语音 | `false` |
-| `upload_sources` | 临时存储上传源（逗号分隔，按顺序尝试） | `pomf2,uguu` |
+| `upload_sources` | 临时存储上传源（逗号分隔，按顺序尝试） | `litterbox,uguu,pomf2` |
 | `vocal_vol` | 人声音量（dB，-3 ~ 3，与后端滑条一致） | `0` |
 | `inst_vol` | 伴奏音量（dB，-3 ~ 3，与后端滑条一致） | `0` |
 
@@ -214,6 +214,10 @@ A：说明卡片链路某一步失败了（默认会记 warning 日志）。常�
 - 后端整合包自带 Python 运行时，无需单独安装 Python
 
 ## 更新日志
+
+### V1.4.8
+- ✨ 新增 **litterbox** 上传源并设为默认第一（保留 72 小时、上限 1 GiB，直连网络可通）。它拦 Python 客户端指纹，所以走系统 `curl` 实现
+- 🔧 默认上传顺序：`litterbox,uguu,pomf2`
 
 ### V1.4.7
 - ✨ 新增 `upload_sources` 配置：临时存储源可排序/增减（默认 `pomf2,uguu`）。不同地区能通的源不一样，失败会自动换源并在 5 分钟内跳过
