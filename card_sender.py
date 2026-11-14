@@ -290,8 +290,8 @@ def prepare_cover(cover_url: str = "") -> str:
                 _COVER_CACHE.pop(next(iter(_COVER_CACHE)))
             _COVER_CACHE[cover_url] = (url, now)
             logger.info(
-                f"封面已规范化并上传: {cover_url[:60]} | 下载 {downloaded:.1f}s，"
-                f"总计 {time.perf_counter() - started:.1f}s"
+                f"封面处理完成｜源 {cover_url[:50]} ｜ 交给签名服务的直链 {url} ｜ "
+                f"下载 {downloaded:.1f}s，总计 {time.perf_counter() - started:.1f}s"
             )
             return url
         except Exception as error:
